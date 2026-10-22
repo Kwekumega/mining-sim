@@ -112,6 +112,25 @@ export class HaulOperation {
     return this.loadSeconds + haul + this.truck.dumpSeconds + back;
   }
 
+  /** The block the excavator is digging now, or null when the pit is finished. */
+  get currentBlock() {
+    return this.isFinished ? null : this.plan.sequence[this.next];
+  }
+
+  /** Digs one truckload from the current block and moves on when the block is empty. */
+  nextLoad(): Load | null {
+    const block = this.currentBlock;
+    if (!block) return null;
+    const tonnes = Math.min(this.truck.payloadTonnes, this.remainingInBlock);
+    const trueGrade = this.model.get(block.i, block.j, block.k).trueGrade;
+    this.remainingInBlock -= tonnes;
+    if (this.remainingInBlock <= 1e-9) {
+      this.next++;
+      this.remainingInBlock = this.model.blockTonnes;
+    }
+    return { i: block.i, j: block.j, k: block.k, destination: block.destination, tonnes, trueGrade, plannedGrade: block.dilutedGrade };
+  }
+
   /**
    * Runs one shift. With N trucks a load leaves every max(load time, cycle / N) seconds,
    * so the excavator limits output once enough trucks queue.
@@ -128,17 +147,10 @@ export class HaulOperation {
       const interval = Math.max(this.loadSeconds, this.cycleSeconds(block.destination, depth) / this.fleet);
       if (interval > secondsLeft) break;
 
-      const tonnes = Math.min(this.truck.payloadTonnes, this.remainingInBlock);
-      const trueGrade = this.model.get(block.i, block.j, block.k).trueGrade;
-      loads.push({ i: block.i, j: block.j, k: block.k, destination: block.destination, tonnes, trueGrade, plannedGrade: block.dilutedGrade });
+      const before = this.next;
+      loads.push(this.nextLoad()!);
       secondsLeft -= interval;
-      this.remainingInBlock -= tonnes;
-
-      if (this.remainingInBlock <= 1e-9) {
-        this.next++;
-        completed++;
-        this.remainingInBlock = this.model.blockTonnes;
-      }
+      if (this.next > before) completed++;
     }
 
     const worked = hours - secondsLeft / 3600;

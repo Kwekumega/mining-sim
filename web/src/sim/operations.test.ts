@@ -143,3 +143,19 @@ describe("mine", () => {
     expect(() => (slow.trucks = 0)).toThrow(RangeError);
   });
 });
+
+describe("replanning", () => {
+  it("keeps dug blocks dug", () => {
+    const mine = new Mine(42, { explorationBudget: 1e12, startingCash: 2e12 });
+    for (let x = 25; x < 400; x += 50) for (let y = 25; y < 400; y += 50) mine.exploration.drill(x, y, 200);
+    mine.updateEstimates();
+    mine.planPit();
+    for (let n = 0; n < 5; n++) mine.runShift();
+    const dug = mine.dugBlocks;
+    expect(dug.size).toBeGreaterThan(0);
+
+    const plan = mine.planPit();
+    expect(plan.sequence.some((b) => dug.has(mine.model.index(b.i, b.j, b.k)))).toBe(false);
+    expect(mine.dugBlocks.size).toBe(dug.size);
+  });
+});

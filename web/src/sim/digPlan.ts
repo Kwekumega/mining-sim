@@ -64,9 +64,15 @@ export class DigPlan {
    * targets are reached shallowest and richest first, and each new cone is dug level by level.
    * A target's cone contains the cone of every block inside it, so the walls stay safe.
    */
-  static create(model: BlockModel, estimates: EstimateGrid, targets: readonly Key[], settings: Partial<PlanSettings> = {}): DigPlan {
+  static create(
+    model: BlockModel,
+    estimates: EstimateGrid,
+    targets: readonly Key[],
+    settings: Partial<PlanSettings> = {},
+    alreadyDug: ReadonlySet<number> = new Set(),
+  ): DigPlan {
     const s = { ...defaultPlan, ...settings };
-    const inPit = new Set<number>();
+    const inPit = new Set<number>(alreadyDug);
     const sequence: PlannedBlock[] = [];
 
     const ordered = [...targets].sort((a, b) => a[2] - b[2] || estimates.get(...b).grade - estimates.get(...a).grade);
@@ -88,14 +94,15 @@ export class DigPlan {
     return new DigPlan(model, sequence);
   }
 
-  /** Plans a pit reaching every block whose estimate clears the cutoff. */
-  static forAllOre(model: BlockModel, estimates: EstimateGrid, settings: Partial<PlanSettings> = {}): DigPlan {
+  /** Plans a pit reaching every block whose estimate clears the cutoff. Blocks already dug are left out. */
+  static forAllOre(model: BlockModel, estimates: EstimateGrid, settings: Partial<PlanSettings> = {}, alreadyDug: ReadonlySet<number> = new Set()): DigPlan {
     const s = { ...defaultPlan, ...settings };
     const targets: Key[] = [];
     for (let k = 0; k < model.nz; k++)
       for (let j = 0; j < model.ny; j++)
-        for (let i = 0; i < model.nx; i++) if (isOre(estimates.get(i, j, k), s)) targets.push([i, j, k]);
-    return DigPlan.create(model, estimates, targets, s);
+        for (let i = 0; i < model.nx; i++)
+          if (!alreadyDug.has(model.index(i, j, k)) && isOre(estimates.get(i, j, k), s)) targets.push([i, j, k]);
+    return DigPlan.create(model, estimates, targets, s, alreadyDug);
   }
 }
 

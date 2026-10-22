@@ -3,7 +3,7 @@ import { generateDeposit, type DepositSettings } from "./deposit";
 import { DigPlan, defaultPlan, type PlanSettings } from "./digPlan";
 import { DrillingProgram } from "./drilling";
 import { EstimateGrid } from "./estimator";
-import { HaulOperation, defaultExcavator, defaultRoutes, defaultTruck, tonnesTo } from "./haul";
+import { HaulOperation, defaultExcavator, defaultRoutes, defaultTruck, tonnesTo, type Excavator, type HaulTruck } from "./haul";
 import { Plant, ounces, type PlantShift, type PlantSettings } from "./plant";
 
 export type Role = "geologist" | "planner" | "operator" | "plant";
@@ -17,6 +17,8 @@ export interface MineSettings {
   /** Crew, maintenance and ownership cost per truck hour, excluding fuel. */
   truckCostPerHour: number;
   trucks: number;
+  excavator: Excavator;
+  truck: HaulTruck;
   plan: PlanSettings;
   plantSettings: PlantSettings;
 }
@@ -29,6 +31,8 @@ export const defaultMine: MineSettings = {
   dieselPerLitre: 1.3,
   truckCostPerHour: 180,
   trucks: 4,
+  excavator: defaultExcavator,
+  truck: defaultTruck,
   plan: defaultPlan,
   plantSettings: { feedRateTph: 400, grindP80: 106 },
 };
@@ -98,6 +102,18 @@ export class Mine {
     return this.haul?.blocksDug ?? 0;
   }
 
+  private dugEarlier = new Set<number>();
+
+  /** Every block dug so far, under this plan and any earlier ones, by block index. */
+  get dugBlocks(): Set<number> {
+    const dug = new Set(this.dugEarlier);
+    if (this.plan) for (let n = 0; n < this.blocksDug; n++) {
+      const b = this.plan.sequence[n];
+      dug.add(this.model.index(b.i, b.j, b.k));
+    }
+    return dug;
+  }
+
   get haulOperation(): HaulOperation | null {
     return this.haul;
   }
@@ -107,10 +123,11 @@ export class Mine {
     this.estimates = new EstimateGrid(this.model, this.exploration.holes);
   }
 
-  /** Mine Planner: plan a pit around every block above cutoff. Replaces any earlier plan and its progress. */
+  /** Mine Planner: plan a pit around every block above cutoff. Replaces any earlier plan; dug blocks stay dug. */
   planPit(): DigPlan {
-    this.plan = DigPlan.forAllOre(this.model, this.estimates, this.planSettings);
-    this.haul = new HaulOperation(this.model, this.plan, defaultExcavator, defaultTruck, this.fleet, defaultRoutes);
+    this.dugEarlier = this.dugBlocks;
+    this.plan = DigPlan.forAllOre(this.model, this.estimates, this.planSettings, this.dugEarlier);
+    this.haul = new HaulOperation(this.model, this.plan, this.settings.excavator, this.settings.truck, this.fleet, defaultRoutes);
     return this.plan;
   }
 

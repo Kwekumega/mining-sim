@@ -7,124 +7,60 @@
     <title>Kestrel Ridge Mine</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Saira+Condensed:wght@500;700&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&family=Saira+Condensed:wght@500;700&display=swap" />
   </head>
   <body>
-    <header class="masthead">
-      <div class="masthead-inner">
-        <div class="brand">
-          <h1>Kestrel Ridge</h1>
-          <p class="lease">Gold project · Lease ML-2047 · 400 × 400 m, 200 m deep</p>
-        </div>
-        <dl class="ticker">
-          <div><dt>Cash</dt><dd id="cash">–</dd></div>
-          <div><dt>Shift</dt><dd id="shift">–</dd></div>
-          <div><dt>Gold sold</dt><dd id="gold">–</dd></div>
-          <div><dt>Reconciliation</dt><dd id="recon" title="Actual ore grade delivered as a share of what the plan expected">–</dd></div>
-        </dl>
+    <div id="game" aria-label="Kestrel Ridge mine, the game world"></div>
+
+    <div class="top">
+    <header class="bar">
+      <div class="brand">Kestrel Ridge</div>
+      <dl class="stats">
+        <div><dt id="stat-shift">Day shift</dt><dd id="stat-time">Day 1 · 06:00</dd></div>
+        <div><dt>Cash</dt><dd id="stat-cash">–</dd></div>
+        <div><dt>Gold poured</dt><dd id="stat-gold">0 oz</dd></div>
+        <div class="extra"><dt>Reconciliation</dt><dd id="stat-recon" title="Actual ore grade delivered as a share of what the plan promised">–</dd></div>
+        <div class="extra"><dt>Pit</dt><dd id="stat-pit">Not planned</dd></div>
+        <div class="extra"><dt>Drill budget</dt><dd id="stat-budget">–</dd></div>
+      </dl>
+      <div class="speed" role="group" aria-label="Game speed">
+        <button data-speed="1" aria-pressed="true">1×</button>
+        <button data-speed="5" aria-pressed="false">5×</button>
+        <button data-speed="30" aria-pressed="false">30×</button>
       </div>
     </header>
 
-    <main class="workspace">
-      <section class="views" aria-label="Mine views">
-        <div class="view">
-          <div class="view-head">
-            <h2>Plan view</h2>
-            <label class="level" for="level">Level <output id="level-out">2</output>
-              <input id="level" type="range" min="0" max="19" step="1" value="5" />
-            </label>
-          </div>
-          <canvas id="plan" class="map" aria-label="Plan view of one mine level"></canvas>
-          <p class="hint" id="plan-hint">Click to drill a hole. The dashed line marks the cross-section below.</p>
-        </div>
-        <div class="view">
-          <div class="view-head">
-            <h2>Cross-section</h2>
-            <span class="section-label" id="section-label">–</span>
-          </div>
-          <canvas id="section" class="map section" aria-label="East-west cross-section"></canvas>
-          <div class="legend" id="legend"></div>
-        </div>
+    <div class="below">
+    <nav class="roles" aria-label="Choose your job">
+      <span class="roles-label">Work as</span>
+      <button data-role="geologist" aria-pressed="true"><i style="background:#2f7fc1"></i>Geologist</button>
+      <button data-role="planner" aria-pressed="false"><i style="background:#f2f2ee"></i>Mine Planner</button>
+      <button data-role="operator" aria-pressed="false"><i style="background:#f08a1c"></i>Equipment Operator</button>
+      <button data-role="plant" aria-pressed="false"><i style="background:#3fa35a"></i>Plant Operator</button>
+    </nav>
+    <ol class="feed" id="feed" aria-live="polite"></ol>
+    </div>
+    </div>
+    <div class="prompt" id="prompt" hidden></div>
+    <p class="keys">WASD or arrows to move · <kbd>E</kbd> to act · scroll to zoom · Esc closes panels</p>
+
+    <div class="touch" aria-hidden="true">
+      <div class="pad">
+        <button data-touch="up" class="up">▲</button>
+        <button data-touch="left" class="left">◀</button>
+        <button data-touch="right" class="right">▶</button>
+        <button data-touch="down" class="down">▼</button>
+      </div>
+      <button data-touch="act" class="act">E</button>
+    </div>
+
+    <div class="modal" id="modal" hidden>
+      <section class="sheet" role="dialog" aria-labelledby="modal-title">
+        <header><h2 id="modal-title"></h2><button id="modal-close" aria-label="Close">✕</button></header>
+        <div id="modal-body"></div>
+        <p class="sheet-note">The mine keeps running while this is open.</p>
       </section>
-
-      <section class="desk" aria-label="Roles">
-        <div class="tabs" role="tablist">
-          <button role="tab" id="tab-geologist" data-role="geologist" aria-selected="true">Geologist</button>
-          <button role="tab" id="tab-planner" data-role="planner" aria-selected="false">Mine Planner</button>
-          <button role="tab" id="tab-operator" data-role="operator" aria-selected="false">Equipment Operator</button>
-          <button role="tab" id="tab-plant" data-role="plant" aria-selected="false">Plant Operator</button>
-        </div>
-
-        <div class="panel" id="panel-geologist" role="tabpanel">
-          <p class="brief">Find the gold. Each hole returns assays every 5 m and sharpens the grade estimate around it.</p>
-          <label class="field" for="hole-depth">Hole depth
-            <select id="hole-depth">
-              <option value="100">100 m</option>
-              <option value="150">150 m</option>
-              <option value="200" selected>200 m</option>
-            </select>
-          </label>
-          <dl class="readout" id="geo-readout"></dl>
-          <div class="note" id="geo-last">Click the plan view to drill your first hole.</div>
-        </div>
-
-        <div class="panel" id="panel-planner" role="tabpanel" hidden>
-          <p class="brief">Decide what is ore. Blocks above the cutoff go to the plant; everything above them must come out first.</p>
-          <label class="field" for="cutoff">Cutoff grade <output id="cutoff-out"></output>
-            <input id="cutoff" type="range" min="0.3" max="3" step="0.05" />
-          </label>
-          <label class="field" for="confidence">Minimum confidence <output id="confidence-out"></output>
-            <input id="confidence" type="range" min="0" max="0.8" step="0.05" />
-          </label>
-          <button class="action" id="plan-pit">Plan pit</button>
-          <dl class="readout" id="plan-readout"></dl>
-          <div class="note warn" id="plan-stale" hidden>New drilling since this plan. Replan to use it; the pit restarts from the current design.</div>
-        </div>
-
-        <div class="panel" id="panel-operator" role="tabpanel" hidden>
-          <p class="brief">Move rock. One excavator loads the trucks; deeper benches mean longer hauls up the ramp.</p>
-          <div class="field">Haul trucks
-            <div class="stepper">
-              <button id="trucks-down" aria-label="One fewer truck">−</button>
-              <output id="trucks-out"></output>
-              <button id="trucks-up" aria-label="One more truck">+</button>
-            </div>
-          </div>
-          <dl class="readout" id="fleet-readout"></dl>
-        </div>
-
-        <div class="panel" id="panel-plant" role="tabpanel" hidden>
-          <p class="brief">Turn ore into gold. Grinding finer recovers more, but the mill handles fewer tonnes and power costs rise.</p>
-          <label class="field" for="feed">Feed rate <output id="feed-out"></output>
-            <input id="feed" type="range" min="50" max="800" step="10" />
-          </label>
-          <label class="field" for="grind">Grind size P80 <output id="grind-out"></output>
-            <input id="grind" type="range" min="53" max="250" step="1" />
-          </label>
-          <dl class="readout" id="plant-readout"></dl>
-        </div>
-
-        <div class="run">
-          <button class="action primary" id="run-shift">Run 12 h shift</button>
-          <button class="action" id="run-week">Run 1 week</button>
-        </div>
-      </section>
-
-      <section class="log" aria-label="Shift log">
-        <h2>Shift log</h2>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Shift</th><th>Ore hauled</th><th>Waste hauled</th><th>Planned grade</th><th>Actual grade</th>
-                <th>Milled</th><th>Recovery</th><th>Gold</th><th>Profit</th>
-              </tr>
-            </thead>
-            <tbody id="log-body"><tr class="empty"><td colspan="9">No shifts yet. Drill, plan a pit, then run a shift.</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-    </main>
-    <script type="module" src="/src/ui/main.ts"></script>
+    </div>
+    <script type="module" src="/src/game/main.ts"></script>
   </body>
 </html>
