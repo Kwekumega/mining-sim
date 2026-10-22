@@ -5,6 +5,17 @@ A single-player, realistic mining simulation for PC where you can work any role 
 - `src/MiningSim.Core`: the simulation, with no engine dependency (geology, exploration, later equipment, plant and economy).
 - `tests/MiningSim.Tests`: xUnit tests for the simulation.
 - `game`: the Godot 4 (.NET) project that renders the sim.
+- `web`: the browser version, with the sim ported to TypeScript (`web/src/sim`) and a playable page (`web/src/ui`).
+
+## Web version
+
+```
+cd web
+npm install
+npm test        # sim tests
+npm run dev     # play locally
+npm run build   # one self-contained dist/index.html
+```
 
 ## Run the tests
 
