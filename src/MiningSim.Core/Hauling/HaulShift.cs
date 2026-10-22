@@ -34,14 +34,21 @@ public sealed class HaulOperation
         _plan = plan;
         Excavator = excavator;
         Truck = truck;
-        Trucks = trucks;
+        _trucks = trucks;
         Routes = routes;
         _remainingInBlock = plan.Sequence.Count > 0 ? model.BlockTonnes : 0;
     }
 
     public Excavator Excavator { get; }
     public HaulTruck Truck { get; }
-    public int Trucks { get; }
+    private int _trucks;
+
+    /// <summary>Trucks in the fleet; can change between shifts.</summary>
+    public int Trucks
+    {
+        get => _trucks;
+        set => _trucks = value > 0 ? value : throw new ArgumentOutOfRangeException(nameof(value), "Fleet needs at least one truck.");
+    }
     public HaulRoutes Routes { get; }
     public bool IsFinished => _next >= _plan.Sequence.Count;
     public int BlocksDug => _next;

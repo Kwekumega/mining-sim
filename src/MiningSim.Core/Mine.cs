@@ -64,7 +64,25 @@ public sealed class Mine
         Plant = new Plant(Settings.Plant);
         PlanSettings = Settings.Plan;
         PlantSettings = Settings.PlantSettings;
+        _trucks = Settings.Trucks;
     }
+
+    private int _trucks;
+
+    /// <summary>Equipment Operator: trucks on the haul fleet. Takes effect from the next shift.</summary>
+    public int Trucks
+    {
+        get => _trucks;
+        set
+        {
+            if (value <= 0) throw new ArgumentOutOfRangeException(nameof(value), "Fleet needs at least one truck.");
+            _trucks = value;
+            if (_haul is not null) _haul.Trucks = value;
+        }
+    }
+
+    /// <summary>Blocks of the current plan already dug, in plan order.</summary>
+    public int BlocksDug => _haul?.BlocksDug ?? 0;
 
     public MineSettings Settings { get; }
     public BlockModel Model { get; }
@@ -89,7 +107,7 @@ public sealed class Mine
     {
         if (Estimates is null) UpdateEstimates();
         Plan = DigPlan.CreateForAllOre(Model, Estimates!, PlanSettings);
-        _haul = new HaulOperation(Model, Plan, Settings.Excavator, Settings.Truck, Settings.Trucks, Settings.Routes);
+        _haul = new HaulOperation(Model, Plan, Settings.Excavator, Settings.Truck, Trucks, Settings.Routes);
         return Plan;
     }
 
@@ -104,7 +122,7 @@ public sealed class Mine
 
         var plant = Plant.RunShift(hours, PlantSettings);
         var revenue = plant.GoldOunces * Settings.GoldPricePerOunce;
-        var haulCost = haul.FuelLitres * Settings.DieselPerLitre + haul.Hours * Settings.Trucks * Settings.TruckCostPerHour;
+        var haulCost = haul.FuelLitres * Settings.DieselPerLitre + haul.Hours * Trucks * Settings.TruckCostPerHour;
         Cash += revenue - haulCost - plant.Cost;
         ShiftsWorked++;
 

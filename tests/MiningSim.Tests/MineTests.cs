@@ -72,4 +72,30 @@ public class MineTests
 
         Assert.NotNull(mine.Plan);
     }
+
+    [Fact]
+    public void ChangingTrucksAffectsNextShift()
+    {
+        var one = DrilledMine(spacing: 50);
+        one.Trucks = 1;
+        var four = DrilledMine(spacing: 50);
+        four.Trucks = 4;
+
+        var slow = one.RunShift();
+        var fast = four.RunShift();
+
+        Assert.True(fast.OreHauled + fast.WasteHauled > slow.OreHauled + slow.WasteHauled);
+        Assert.Throws<ArgumentOutOfRangeException>(() => one.Trucks = 0);
+    }
+
+    [Fact]
+    public void BlocksDugTracksPlanProgress()
+    {
+        var mine = DrilledMine(spacing: 50);
+        mine.PlanPit();
+
+        mine.RunShift();
+
+        Assert.True(mine.BlocksDug > 0);
+    }
 }
