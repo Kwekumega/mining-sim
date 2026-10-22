@@ -5,14 +5,14 @@ A single-player, realistic mining simulation for PC where you can work any role 
 - `src/MiningSim.Core`: the simulation, with no engine dependency (geology, exploration, later equipment, plant and economy).
 - `tests/MiningSim.Tests`: xUnit tests for the simulation.
 - `game`: the Godot 4 (.NET) project that renders the sim.
-- `web`: the browser game. The sim is ported to TypeScript (`web/src/sim`); the animated top-down mine is built with Phaser (`web/src/game`).
+- `web`: the browser game, **MineLife**: a 3D low-poly life sim (three.js) in Sikakrom, a fictional Ghanaian gold-mining town. Take mine jobs from your phone (labourer, core shed, truck driver, excavator, plant, geologist), earn cedis, train for promotions, and keep hunger, energy, fun, social and hygiene up while paying rent. Code in `web/src/life`. The earlier Phaser top-down mine (`web/src/game`) and the TypeScript sim (`web/src/sim`) are still in the repo.
 
 ## Web version
 
 ```
 cd web
 npm install
-npm test        # sim tests
+npm test        # sim and life-model tests
 npm run dev     # play locally
 npm run build   # one self-contained dist/index.html
 ```

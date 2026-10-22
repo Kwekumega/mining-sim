@@ -4,63 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="claude:viewport-fit-sides" content="cover" />
-    <title>Kestrel Ridge Mine</title>
+    <title>MineLife Sikakrom</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&family=Saira+Condensed:wght@500;700&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@500;700;800&display=swap" />
   </head>
   <body>
-    <div id="game" aria-label="Kestrel Ridge mine, the game world"></div>
-
-    <div class="top">
-    <header class="bar">
-      <div class="brand">Kestrel Ridge</div>
-      <dl class="stats">
-        <div><dt id="stat-shift">Day shift</dt><dd id="stat-time">Day 1 · 06:00</dd></div>
-        <div><dt>Cash</dt><dd id="stat-cash">–</dd></div>
-        <div><dt>Gold poured</dt><dd id="stat-gold">0 oz</dd></div>
-        <div class="extra"><dt>Reconciliation</dt><dd id="stat-recon" title="Actual ore grade delivered as a share of what the plan promised">–</dd></div>
-        <div class="extra"><dt>Pit</dt><dd id="stat-pit">Not planned</dd></div>
-        <div class="extra"><dt>Drill budget</dt><dd id="stat-budget">–</dd></div>
-      </dl>
-      <div class="speed" role="group" aria-label="Game speed">
-        <button data-speed="1" aria-pressed="true">1×</button>
-        <button data-speed="5" aria-pressed="false">5×</button>
-        <button data-speed="30" aria-pressed="false">30×</button>
-      </div>
-    </header>
-
-    <div class="below">
-    <nav class="roles" aria-label="Choose your job">
-      <span class="roles-label">Work as</span>
-      <button data-role="geologist" aria-pressed="true"><i style="background:#2f7fc1"></i>Geologist</button>
-      <button data-role="planner" aria-pressed="false"><i style="background:#f2f2ee"></i>Mine Planner</button>
-      <button data-role="operator" aria-pressed="false"><i style="background:#f08a1c"></i>Equipment Operator</button>
-      <button data-role="plant" aria-pressed="false"><i style="background:#3fa35a"></i>Plant Operator</button>
-    </nav>
-    <ol class="feed" id="feed" aria-live="polite"></ol>
-    </div>
-    </div>
-    <div class="prompt" id="prompt" hidden></div>
-    <p class="keys">WASD or arrows to move · <kbd>E</kbd> to act · scroll to zoom · Esc closes panels</p>
-
-    <div class="touch" aria-hidden="true">
-      <div class="pad">
-        <button data-touch="up" class="up">▲</button>
-        <button data-touch="left" class="left">◀</button>
-        <button data-touch="right" class="right">▶</button>
-        <button data-touch="down" class="down">▼</button>
-      </div>
-      <button data-touch="act" class="act">E</button>
-    </div>
-
-    <div class="modal" id="modal" hidden>
-      <section class="sheet" role="dialog" aria-labelledby="modal-title">
-        <header><h2 id="modal-title"></h2><button id="modal-close" aria-label="Close">✕</button></header>
-        <div id="modal-body"></div>
-        <p class="sheet-note">The mine keeps running while this is open.</p>
-      </section>
-    </div>
-    <script type="module" src="/src/game/main.ts"></script>
+    <div id="game" aria-label="Sikakrom, the game world"></div>
+    <script type="module" src="/src/life/main.ts"></script>
   </body>
 </html>
