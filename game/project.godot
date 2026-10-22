@@ -1,0 +1,12 @@
+; Engine configuration file.
+config_version=5
+
+[application]
+
+config/name="Mining Sim"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.3", "C#", "Forward Plus")
+
+[dotnet]
+
+project/assembly_name="MiningGame"
