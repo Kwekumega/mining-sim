@@ -272,6 +272,7 @@ export class Game {
     this.started = true;
     this.paused = false;
     this.clock.getDelta();
+    this.refreshHud();
     if (!resumed) {
       const rich = this.life.background === "family";
       this.hud.dialog(
