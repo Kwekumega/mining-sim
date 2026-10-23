@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { Random } from "../sim/random";
 import { CERTS, CertId, JOBS, JobId, Life, LifeEvent, Need, NEEDS, Offer, OFFERS, PlaceId, RENT, SHIFT, TASKS_PER_SHIFT } from "./life";
 import { cedis, Choice, h, Hud, NEED_INFO } from "./hud";
-import { box, HaulTruck, Look, Person, SKINS, windowGlow } from "./models";
+import { box, HaulTruck, lampGlow, Look, Person, SKINS, windowGlow } from "./models";
+import { FilmLook } from "./look";
 import { Football, LoadClient, PASSES_PER_TRUCK, placeVehicle, Shovel, TrotroBus, TruckAI, turnToward, Walker } from "./npcs";
 import { GROUND, heightAt } from "./terrain";
 import { buildWorld, SpotId, TOWN_NAME, World } from "./world";
@@ -52,6 +53,8 @@ interface Profile {
 
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
+  private readonly look: FilmLook;
+  private bakedAt = -99;
   private readonly camera = new THREE.PerspectiveCamera(55, 1, 0.5, 900);
   private readonly world: World;
   private readonly hud: Hud;
@@ -95,13 +98,14 @@ export class Game {
   constructor(private readonly container: HTMLElement) {
     const seed = 20261022;
     this.rng = new Random(seed);
-    this.renderer = new THREE.WebGLRenderer({ antialias: devicePixelRatio < 2, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.append(this.renderer.domElement);
     this.world = buildWorld(seed);
+    this.look = new FilmLook(this.renderer, this.world.scene, this.camera);
     this.hud = new Hud(document.body);
 
     this.carryMeshes = {
@@ -387,6 +391,7 @@ export class Game {
     const w = this.container.clientWidth || innerWidth;
     const hgt = this.container.clientHeight || innerHeight;
     this.renderer.setSize(w, hgt);
+    this.look.setSize(w, hgt);
     this.camera.aspect = w / hgt;
     if (w < hgt) this.cam.dist = Math.max(this.cam.dist, 24);
     this.camera.updateProjectionMatrix();
@@ -401,29 +406,42 @@ export class Game {
     this.animateWorld(live ? dt : 0);
     this.updateCamera(dt);
     this.updateLighting();
-    this.renderer.render(this.world.scene, this.camera);
+    this.look.render(performance.now() / 1000);
     this.frames++;
     this.checkFps(dt);
   }
 
+  /** Steps quality down while the frame rate stays low: first bloom and MSAA, then post and shadows. */
   private checkFps(dt: number): void {
     const f = this.fpsCheck;
     if (f.done || !this.started) return;
     f.t += dt;
     f.frames++;
-    if (f.t > 5) {
+    if (f.t < 4) return;
+    const fps = f.frames / f.t;
+    f.t = 0;
+    f.frames = 0;
+    if (fps >= 40 || this.look.quality === 0) {
       f.done = true;
-      if (f.frames / f.t < 28 && this.shadows) {
-        this.shadows = false;
-        this.renderer.shadowMap.enabled = false;
-        this.world.sun.castShadow = false;
-        this.world.scene.traverse((o) => {
-          const m = (o as THREE.Mesh).material as THREE.Material | undefined;
-          if (m) m.needsUpdate = true;
-        });
-        this.renderer.setPixelRatio(1);
-      }
+      return;
     }
+    this.setGraphics(this.look.quality - 1);
+  }
+
+  setGraphics(q: number): void {
+    this.look.setQuality(q);
+    const shadows = q > 0;
+    if (shadows !== this.shadows) {
+      this.shadows = shadows;
+      this.renderer.shadowMap.enabled = shadows;
+      this.world.sun.castShadow = shadows;
+      this.world.scene.traverse((o) => {
+        const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+        if (m) m.needsUpdate = true;
+      });
+    }
+    this.renderer.setPixelRatio(q === 2 ? Math.min(devicePixelRatio, 1.5) : 1);
+    this.resize();
   }
 
   private update(dt: number): void {
@@ -619,22 +637,29 @@ export class Game {
   }
 
   private updateLighting(): void {
-    const hour = this.started ? this.life.hour : 16.5;
-    const day = Math.sqrt(Math.max(0, Math.sin(((hour - 6) / 12) * Math.PI)));
-    const dusk = Math.max(0, 1 - Math.abs(hour - 18.2) / 1.4) + Math.max(0, 1 - Math.abs(hour - 5.9) / 1.2);
+    const hour = this.started ? this.life.hour : 16.8;
+    const elevation = Math.sin(((hour - 6) / 12) * Math.PI);
+    const day = Math.sqrt(Math.max(0, elevation));
+    const dusk = Math.max(0, 1 - Math.abs(hour - 18.1) / 1.3) + Math.max(0, 1 - Math.abs(hour - 6) / 1.1);
     const w = this.world;
-    const sky = new THREE.Color("#0d1630").lerp(new THREE.Color("#9fd3f5"), Math.min(1, day * 1.6));
-    sky.lerp(new THREE.Color("#f2995e"), Math.min(0.55, dusk * 0.55));
-    (w.scene.background as THREE.Color).copy(sky);
-    (w.scene.fog as THREE.Fog).color.copy(sky).lerp(new THREE.Color("#ffffff"), day * 0.25);
-    w.sun.intensity = 0.15 + day * 2.1;
-    w.sun.color.set("#fff3dc").lerp(new THREE.Color("#ffa060"), Math.min(1, dusk));
-    w.hemi.intensity = 0.35 + day * 0.8;
     const angle = ((hour - 6) / 12) * Math.PI;
-    const dir = new THREE.Vector3(Math.cos(angle) * 0.8, Math.max(0.25, Math.sin(angle)), 0.45).normalize();
-    w.sun.position.copy(this.pos).addScaledVector(dir, 140);
+    const sunDir = new THREE.Vector3(Math.cos(angle) * 0.85, elevation, 0.4).normalize();
+    this.look.setTime(day, Math.min(1, dusk), sunDir);
+    // By day the sun lights the scene; at night a pale moon from high up.
+    const night = day < 0.12;
+    const lightDir = night ? new THREE.Vector3(-0.3, 0.8, -0.5).normalize() : new THREE.Vector3(sunDir.x, Math.max(0.12, sunDir.y), sunDir.z).normalize();
+    w.sun.intensity = night ? 0.7 : 0.5 + day * 2.9;
+    w.sun.color.set(night ? "#9fb4d9" : "#fff1d6").lerp(new THREE.Color("#ff9a50"), night ? 0 : Math.min(1, dusk * 0.9));
+    w.hemi.intensity = night ? 0.35 : 0.12 + day * 0.35;
+    w.sun.position.copy(this.pos).addScaledVector(lightDir, 140);
     w.sun.target.position.copy(this.pos);
-    windowGlow.emissiveIntensity = day > 0.3 ? 0 : 1 - day / 0.3;
+    const dark = day > 0.3 ? 0 : 1 - day / 0.3;
+    windowGlow.emissiveIntensity = dark * 1.4;
+    lampGlow.emissiveIntensity = dark * 6;
+    if (Math.abs(hour - this.bakedAt) > 0.5) {
+      this.bakedAt = hour;
+      this.look.bakeEnvironment();
+    }
   }
 
   // ---------------------------------------------------------------- goals and HUD
@@ -1239,6 +1264,15 @@ export class Game {
         h("p", null, h("b", null, this.profile.name), ` · ${l.background === "family" ? "came with family savings" : "came with nothing but hustle"}`),
         h("div.needList", null, ...NEEDS.map((n) => h("div", null, `${NEED_INFO[n].icon} ${NEED_INFO[n].label}`, h("b", null, `${Math.round(l.needs[n])}`)))),
         h("p.hint", null, `Certificates: ${[...l.certs].map((c) => CERTS[c].title).join(", ") || "none yet"}`),
+        h("div.field", null, h("span", null, "Graphics"), h("div.tabs", null, ...[["Low", 0], ["Medium", 1], ["High", 2]].map(([label, q]) => {
+          const b = h("button", { "aria-selected": String(this.look.quality === q) }, String(label));
+          b.addEventListener("click", () => {
+            this.fpsCheck.done = true;
+            this.setGraphics(q as number);
+            this.hud.refreshSheet();
+          });
+          return b;
+        }))),
         h("button.choice", { onclick: () => (this.save(), this.hud.toast("Game saved on this device.", "good")) }, h("span", null, "Save game")),
       );
     this.hud.sheet("Phone", [

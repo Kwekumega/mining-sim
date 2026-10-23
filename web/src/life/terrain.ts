@@ -25,8 +25,8 @@ export function heightAt(x: number, z: number): number {
     const ramp = -PIT_DEPTH * (1 - t);
     const side = Math.abs(dz);
     if (side < RAMP.halfWidth) h = ramp;
-    else if (side < RAMP.halfWidth + 4) {
-      const w = (side - RAMP.halfWidth) / 4;
+    else if (side < RAMP.halfWidth + 9) {
+      const w = (side - RAMP.halfWidth) / 9;
       h = ramp * (1 - w) + h * w;
     }
   }
@@ -40,6 +40,6 @@ export function onRamp(x: number, z: number): boolean {
 }
 
 /** The pit and its ramp trench are drawn as a detailed disc of this radius; everywhere else is flat. */
-export const PIT_DISC = { radius: 100, segments: 192 };
+export const PIT_DISC = { radius: 100, segments: 288 };
 
 export const GROUND = { minX: -260, maxX: 280, minZ: -260, maxZ: 220 };

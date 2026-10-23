@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import { Random } from "../sim/random";
 import { GROUND, heightAt, onRamp, PIT, PIT_DEPTH, PIT_DISC, RAMP } from "./terrain";
-import { box, building, BuildingSpec, cylinder, Excavator, HaulTruck, label, mat, Person, SKINS, windowGlow } from "./models";
+import { box, building, BuildingSpec, concreteMat, cylinder, Excavator, HaulTruck, label, mat, Person, SKINS, slab, windowGlow } from "./models";
+import { dirt } from "./textures";
+import { decorate } from "./decor";
 
 /**
  * Sikakrom: a small gold-mining town in the south-west, the mine lease to the north-east.
@@ -56,23 +58,22 @@ export const TOWN_NAME = "Sikakrom";
 export function buildWorld(seed: number): World {
   const rng = new Random(seed);
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color("#9fd3f5");
-  scene.fog = new THREE.Fog("#cfe6f2", 160, 420);
 
-  const hemi = new THREE.HemisphereLight("#d9efff", "#8a6a45", 1.1);
+  const hemi = new THREE.HemisphereLight("#c9d6e0", "#7a5a40", 0.4);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight("#fff3dc", 2);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   const sc = sun.shadow.camera;
-  sc.left = -70;
-  sc.right = 70;
-  sc.top = 70;
-  sc.bottom = -70;
+  sc.left = -80;
+  sc.right = 80;
+  sc.top = 80;
+  sc.bottom = -80;
   sc.near = 1;
   sc.far = 300;
-  sun.shadow.bias = -0.0008;
-  sun.shadow.normalBias = 0.4;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.3;
+  sun.shadow.radius = 3;
   scene.add(sun, sun.target);
 
   const colliders: Box2[] = [];
@@ -141,7 +142,7 @@ export function buildWorld(seed: number): World {
 
   // Benches and tables in front of the chop bar and the spot.
   const benchSeats: { pos: THREE.Vector3; yaw: number }[] = [];
-  for (const [tx, tz] of [[-124, 94], [-112, 94], [-116, 86], [-104, 86]] as const) {
+  for (const [tx, tz] of [[-106, 101.5], [-99, 101.5], [-106, 107.5], [-99, 107.5]] as const) {
     scene.add(box(3, 0.2, 2, "#7a5230", tx, 1.6, tz), box(0.3, 1.6, 0.3, "#5a3a20", tx, 0.8, tz));
     scene.add(box(3, 0.2, 0.7, "#7a5230", tx, 0.95, tz - 1.6), box(3, 0.2, 0.7, "#7a5230", tx, 0.95, tz + 1.6));
     benchSeats.push({ pos: v(tx - 0.7, tz - 1.6, 0.4), yaw: 0 }, { pos: v(tx + 0.7, tz + 1.6, 0.4), yaw: Math.PI });
@@ -188,7 +189,7 @@ export function buildWorld(seed: number): World {
   names.office = "the mine office";
 
   // Stockyard: a concrete pad with sample sacks and a clock-in board.
-  scene.add(flat(24, 16, "#b7b0a2", 44, -18));
+  scene.add(flat(24, 16, "#948e84", 44, -18));
   const sacks = new THREE.Group();
   for (let i = 0; i < 18; i++) {
     const s = box(1.2, 0.9, 0.8, "#f1ece0", (i % 6) * 1.4 - 3.5, 0.45 + Math.floor(i / 12) * 0.9, (Math.floor(i / 6) % 2) * 1.0);
@@ -231,7 +232,7 @@ export function buildWorld(seed: number): World {
   scene.add(rigSign);
 
   // Truck park.
-  scene.add(flat(30, 22, "#9c958a", 128, -14));
+  scene.add(flat(30, 22, "#7f7a72", 128, -14));
   board(scene, 118, -8, "Truck park");
   spots.truckPark = v(118, -5);
   names.truckPark = "the truck park";
@@ -257,7 +258,7 @@ export function buildWorld(seed: number): World {
   // Process plant: crusher, conveyor, mill, leach tanks, control room, tailings.
   const crusher = new THREE.Group();
   crusher.add(box(12, 6, 10, "#bdb6a8", 0, 3, 0));
-  const hopper = new THREE.Mesh(new THREE.CylinderGeometry(6.5, 3, 4, 4, 1, true), new THREE.MeshLambertMaterial({ color: "#6f6a62", flatShading: true, side: THREE.DoubleSide }));
+  const hopper = new THREE.Mesh(new THREE.CylinderGeometry(6.5, 3, 4, 4, 1, true), new THREE.MeshStandardMaterial({ color: "#6f6a62", roughness: 0.6, metalness: 0.5, side: THREE.DoubleSide }));
   hopper.rotation.y = Math.PI / 4;
   hopper.position.y = 8;
   crusher.add(hopper);
@@ -314,6 +315,8 @@ export function buildWorld(seed: number): World {
     { x: 172, z: -160 }, { x: 214, z: -118 }, { x: -76, z: -104 }, { x: 150, z: 40 },
   ];
 
+  decorate(scene, rng, colliders, roads);
+
   // Trees, kept off roads, buildings, pads and the pit.
   trees(scene, rng, (x, z) => {
     if (Math.hypot(x - PIT.x, z - PIT.z) < PIT.radius + 14) return false;
@@ -338,10 +341,8 @@ export function buildWorld(seed: number): World {
 }
 
 function flat(w: number, d: number, colour: string, x: number, z: number): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat(colour));
-  m.rotation.x = -Math.PI / 2;
-  m.position.set(x, 0.06, z);
-  m.receiveShadow = true;
+  const m = slab(w, 0.2, d, concreteMat(colour), x, 0.02, z, 6);
+  m.castShadow = false;
   return m;
 }
 
@@ -377,16 +378,17 @@ function ground(rng: Random, roads: [number, number][][]): THREE.Mesh {
   const sz = size / H;
   const px = (x: number) => (x - GROUND.minX) * sx;
   const pz = (z: number) => (z - GROUND.minZ) * sz;
-  ctx.fillStyle = "#7da34a";
+  ctx.fillStyle = "#66733f";
   ctx.fillRect(0, 0, size, size);
-  for (let i = 0; i < 900; i++) {
-    ctx.fillStyle = rng.next() < 0.5 ? "rgba(96,140,60,0.35)" : "rgba(150,170,80,0.3)";
+  for (let i = 0; i < 2400; i++) {
+    const k = rng.next();
+    ctx.fillStyle = k < 0.4 ? "rgba(78,98,48,0.35)" : k < 0.75 ? "rgba(146,134,84,0.32)" : "rgba(120,92,60,0.28)";
     ctx.beginPath();
     ctx.arc(rng.next() * size, rng.next() * size, rng.between(6, 40), 0, Math.PI * 2);
     ctx.fill();
   }
   // Laterite over the lease, with a ragged edge.
-  ctx.fillStyle = "#b3643a";
+  ctx.fillStyle = "#a0603c";
   ctx.beginPath();
   ctx.moveTo(px(0), pz(GROUND.minZ));
   for (let z = GROUND.minZ; z <= 60; z += 6) ctx.lineTo(px(-4 + Math.sin(z * 0.2) * 4), pz(z));
@@ -394,31 +396,55 @@ function ground(rng: Random, roads: [number, number][][]): THREE.Mesh {
   ctx.lineTo(px(GROUND.maxX), pz(GROUND.minZ));
   ctx.closePath();
   ctx.fill();
-  for (let i = 0; i < 700; i++) {
-    const x = rng.between(0, GROUND.maxX);
+  ctx.beginPath();
+  ctx.arc(px(PIT.x), pz(PIT.z), (PIT_DISC.radius + 6) * sx, 0, Math.PI * 2);
+  ctx.fill();
+  for (let i = 0; i < 1600; i++) {
+    const x = rng.between(-60, GROUND.maxX);
     const z = rng.between(GROUND.minZ, 40);
-    ctx.fillStyle = rng.next() < 0.5 ? "rgba(140,70,35,0.35)" : "rgba(205,130,80,0.3)";
+    ctx.fillStyle = rng.next() < 0.5 ? "rgba(120,62,34,0.18)" : "rgba(190,128,86,0.16)";
     ctx.beginPath();
-    ctx.arc(px(x), pz(z), rng.between(4, 30), 0, Math.PI * 2);
+    ctx.arc(px(x), pz(z), rng.between(2, 16) * sx * 0.6, 0, Math.PI * 2);
     ctx.fill();
   }
   // Town yard: packed earth along the street.
-  ctx.fillStyle = "#c79a68";
+  ctx.fillStyle = "#9c7a58";
   ctx.fillRect(px(-215), pz(62), px(-20) - px(-215), pz(116) - pz(62));
+  for (let i = 0; i < 900; i++) {
+    ctx.fillStyle = rng.next() < 0.5 ? "rgba(80,60,40,0.25)" : "rgba(170,140,100,0.25)";
+    ctx.beginPath();
+    ctx.arc(px(rng.between(-215, -20)), pz(rng.between(62, 116)), rng.between(2, 14) * sx, 0, Math.PI * 2);
+    ctx.fill();
+  }
   // Roads.
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   for (const road of roads) {
     const town = road[0][0] < -10;
-    for (const [width, colour] of [[16, town ? "#5a5a58" : "#8c6a4f"], [11, town ? "#6b6b68" : "#9e7c5f"]] as const) {
+    for (const [width, colour] of [[16, town ? "#6e5a48" : "#7c5c44"], [11, town ? "#3c3c3a" : "#8a6a50"]] as const) {
       ctx.strokeStyle = colour;
       ctx.lineWidth = width * sx;
       ctx.beginPath();
       road.forEach(([x, z], i) => (i ? ctx.lineTo(px(x), pz(z)) : ctx.moveTo(px(x), pz(z))));
       ctx.stroke();
     }
+    // Wear: tyre tracks and patches.
+    for (let i = 1; i < road.length; i++) {
+      const [ax, az] = road[i - 1];
+      const [bx, bz] = road[i];
+      const len = Math.hypot(bx - ax, bz - az);
+      for (let t = 0; t < len; t += 1.5) {
+        const k = t / len;
+        const x = ax + (bx - ax) * k + rng.between(-4, 4);
+        const z = az + (bz - az) * k + rng.between(-4, 4);
+        ctx.fillStyle = town ? (rng.next() < 0.5 ? "rgba(20,20,20,0.25)" : "rgba(120,110,100,0.18)") : "rgba(60,40,28,0.2)";
+        ctx.beginPath();
+        ctx.ellipse(px(x), pz(z), rng.between(0.5, 2.5) * sx, rng.between(0.3, 1.5) * sx, rng.next() * 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
     if (town) {
-      ctx.strokeStyle = "rgba(255,255,255,0.7)";
+      ctx.strokeStyle = "rgba(230,220,190,0.55)";
       ctx.lineWidth = 0.6 * sx;
       ctx.setLineDash([6 * sx, 6 * sx]);
       ctx.beginPath();
@@ -428,8 +454,14 @@ function ground(rng: Random, roads: [number, number][][]): THREE.Mesh {
     }
   }
   // Pitch.
-  ctx.fillStyle = "#5f9a3c";
+  ctx.fillStyle = "#6f7a3e";
   ctx.fillRect(px(-132), pz(26), px(-88) - px(-132), pz(54) - pz(26));
+  for (let i = 0; i < 300; i++) {
+    ctx.fillStyle = "rgba(140,105,70,0.35)";
+    ctx.beginPath();
+    ctx.arc(px(rng.between(-130, -90)), pz(rng.between(28, 52)), rng.between(1, 6) * sx, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.strokeStyle = "rgba(255,255,255,0.85)";
   ctx.lineWidth = 0.5 * sx;
   ctx.strokeRect(px(-131), pz(27), px(-89) - px(-131), pz(53) - pz(27));
@@ -464,9 +496,25 @@ function ground(rng: Random, roads: [number, number][][]): THREE.Mesh {
   const geo = new THREE.ShapeGeometry(shape);
   geo.rotateX(-Math.PI / 2);
   setGroundUv(geo);
-  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }));
+  const mesh = new THREE.Mesh(geo, groundMaterial({ map: tex }));
   mesh.receiveShadow = true;
   return mesh;
+}
+
+/** Ground material: the painted map, plus a fine pebbly detail texture tiled on top up close. */
+function groundMaterial(params: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
+  const detail = dirt();
+  const m = new THREE.MeshStandardMaterial({ roughness: 0.95, ...params });
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.detailMap = { value: detail };
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nuniform sampler2D detailMap;")
+      .replace(
+        "#include <map_fragment>",
+        "#include <map_fragment>\ndiffuseColor.rgb *= mix(vec3(1.0), texture2D(detailMap, vMapUv * 160.0).rgb * 1.3, 0.8) * mix(vec3(1.0), texture2D(detailMap, vMapUv * 23.0).rgb * 1.3, 0.35);",
+      );
+  };
+  return m;
 }
 
 let groundTexture: THREE.CanvasTexture;
@@ -497,7 +545,7 @@ function pitTile(): THREE.Mesh {
   const positions: number[] = [];
   const colours: number[] = [];
   const c = new THREE.Color();
-  const base = new THREE.Color("#b3643a");
+  const base = new THREE.Color("#a0603c");
   for (const r of radii) {
     for (let i = 0; i < segs; i++) {
       const a = (i / segs) * Math.PI * 2;
@@ -506,7 +554,7 @@ function pitTile(): THREE.Mesh {
       const h = r === PIT_DISC.radius ? 0 : heightAt(x, z);
       positions.push(x, h, z);
       const depth = -h / PIT_DEPTH;
-      if (onRamp(x, z)) c.set("#8f7a66");
+      if (onRamp(x, z)) c.copy(base).multiplyScalar(0.85);
       else if (h < -0.01) {
         // Weathered orange near the top, grey fresh rock deeper, dark ore on the floor.
         c.set("#c0703f").lerp(new THREE.Color("#8d8170"), Math.min(1, depth * 1.2));
@@ -532,7 +580,7 @@ function pitTile(): THREE.Mesh {
   geo.setIndex(index);
   geo.computeVertexNormals();
   setGroundUv(geo);
-  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: groundTexture, vertexColors: true, flatShading: true }));
+  const mesh = new THREE.Mesh(geo, groundMaterial({ map: groundTexture, vertexColors: true, flatShading: true }));
   mesh.receiveShadow = true;
   return mesh;
 }
@@ -542,7 +590,7 @@ function hills(scene: THREE.Scene, rng: Random) {
   for (let i = 0; i < 26; i++) {
     const a = (i / 26) * Math.PI * 2 + rng.between(-0.08, 0.08);
     const r = rng.between(330, 380);
-    const m = new THREE.Mesh(geo, mat(i % 3 ? "#5f8a3f" : "#6f9a48"));
+    const m = new THREE.Mesh(geo, mat(i % 3 ? "#4c5a34" : "#57653a"));
     const s = rng.between(40, 80);
     m.scale.set(s * 1.6, s * rng.between(0.5, 0.9), s * 1.3);
     m.position.set(Math.cos(a) * r, -s * 0.15, Math.sin(a) * r);
@@ -552,24 +600,41 @@ function hills(scene: THREE.Scene, rng: Random) {
 
 function trees(scene: THREE.Scene, rng: Random, ok: (x: number, z: number) => boolean) {
   const spots: [number, number, number][] = [];
-  for (let tries = 0; tries < 4000 && spots.length < 340; tries++) {
+  for (let tries = 0; tries < 5000 && spots.length < 380; tries++) {
     const x = rng.between(GROUND.minX + 6, GROUND.maxX - 6);
     const z = rng.between(GROUND.minZ + 6, GROUND.maxZ - 6);
     if (ok(x, z)) spots.push([x, z, rng.between(0.8, 1.5)]);
   }
-  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.4, 0.6, 4, 5), mat("#6b4a2f"), spots.length);
-  const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(3, 0), mat("#3f7a34"), spots.length);
+  const bark = new THREE.MeshStandardMaterial({ color: "#4a3a2c", roughness: 1 });
+  const leaf = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.9, flatShading: true });
+  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.28, 0.55, 5, 7), bark, spots.length);
+  // Three clumps per tree give a broken, natural canopy.
+  const clumpGeo = new THREE.IcosahedronGeometry(2.4, 1);
+  const pos = clumpGeo.attributes.position;
+  const jr = new Random(9);
+  for (let i = 0; i < pos.count; i++) pos.setXYZ(i, pos.getX(i) * (0.85 + jr.next() * 0.3), pos.getY(i) * (0.75 + jr.next() * 0.2), pos.getZ(i) * (0.85 + jr.next() * 0.3));
+  clumpGeo.computeVertexNormals();
+  const crowns = new THREE.InstancedMesh(clumpGeo, leaf, spots.length * 3);
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
   spots.forEach(([x, z, s], i) => {
-    m.compose(new THREE.Vector3(x, 2 * s, z), q, new THREE.Vector3(s, s, s));
+    q.setFromAxisAngle(new THREE.Vector3(rng.between(-1, 1), 0, rng.between(-1, 1)).normalize(), rng.between(0, 0.12));
+    m.compose(new THREE.Vector3(x, 2.5 * s, z), q, new THREE.Vector3(s, s, s));
     trunks.setMatrixAt(i, m);
-    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (x * 7 + z) % 6);
-    m.compose(new THREE.Vector3(x, 5.5 * s, z), q, new THREE.Vector3(s * 1.1, s * 0.9, s * 1.1));
-    crowns.setMatrixAt(i, m);
-    crowns.setColorAt(i, new THREE.Color().setHSL(0.27 + ((x * 13 + z * 7) % 10) / 200, 0.45, 0.28 + ((x + z * 3) % 10) / 100));
+    const hue = 0.2 + rng.next() * 0.06;
+    for (let k = 0; k < 3; k++) {
+      const a = k * 2.1 + rng.next();
+      q.setFromAxisAngle(up, rng.next() * 6);
+      const off = new THREE.Vector3(Math.cos(a) * 1.4 * s, (5.2 + k * 0.7 + rng.next()) * s, Math.sin(a) * 1.4 * s);
+      const sc = s * (0.9 + rng.next() * 0.45);
+      m.compose(new THREE.Vector3(x + off.x, off.y, z + off.z), q, new THREE.Vector3(sc * 1.2, sc, sc * 1.2));
+      crowns.setMatrixAt(i * 3 + k, m);
+      crowns.setColorAt(i * 3 + k, new THREE.Color().setHSL(hue, 0.32 + rng.next() * 0.12, 0.11 + rng.next() * 0.06));
+    }
   });
   trunks.castShadow = crowns.castShadow = true;
+  crowns.receiveShadow = true;
   scene.add(trunks, crowns);
 }
 
