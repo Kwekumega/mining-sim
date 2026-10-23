@@ -1,4 +1,4 @@
-import { JOBS, Life, OFFERS, RENT, TASKS_PER_SHIFT } from "./life";
+import { BIKE_PRICE, friendLevel, HOMES, JOBS, levelFor, Life, OFFERS, RENT, TASKS_PER_SHIFT, xpForLevel } from "./life";
 
 const life = (bg: "family" | "hustler" = "hustler") => new Life(1, bg);
 
@@ -50,7 +50,7 @@ describe("life", () => {
     expect(l.clockIn()).toBeNull();
     for (let n = 0; n < TASKS_PER_SHIFT; n++) l.completeTask();
     const { paid, counted } = l.clockOut();
-    expect(paid).toBe(JOBS.labourer.pay * TASKS_PER_SHIFT);
+    expect(paid).toBe(JOBS.labourer.pay * (TASKS_PER_SHIFT - 1) + Math.round(JOBS.labourer.pay * 1.05)); // level 1 after three tasks
     expect(counted).toBe(true);
     expect(l.money).toBe(300 + paid);
     expect(l.shiftsWorked.labourer).toBe(1);
@@ -107,5 +107,71 @@ describe("life", () => {
     const e = l.randomEvent();
     expect(e.choices.length).toBeGreaterThan(0);
     expect(typeof e.choices[0].apply(l)).toBe("string");
+  });
+
+  it("levels up a job with experience and pays more", () => {
+    expect(levelFor(0)).toBe(0);
+    expect(levelFor(xpForLevel(3))).toBe(3);
+    const l = life();
+    l.takeJob("labourer");
+    l.clockIn();
+    const first = l.completeTask(1);
+    l.xp.labourer = xpForLevel(4) - 5;
+    l.completeTask(1);
+    expect(l.levelledUp).toBe(4);
+    expect(l.completeTask(1)).toBe(Math.round(first * 1.2));
+  });
+
+  it("supervisor needs the safety certificate and driver shifts", () => {
+    const l = life("family");
+    expect(l.takeJob("supervisor")).toMatch(/safety/);
+    l.certs.add("safetyCert");
+    expect(l.takeJob("supervisor")).toMatch(/2 shifts/);
+    l.shiftsWorked.driver = 2;
+    expect(l.takeJob("supervisor")).toBeNull();
+  });
+
+  it("moving home pays the first week and changes the rent and sleep", () => {
+    const l = life("family");
+    l.minutes = 22 * 60;
+    expect(l.moveHome("chamber")).toBeNull();
+    expect(l.money).toBe(1500 - HOMES.chamber.rent);
+    expect(l.rent).toBe(450);
+    expect(l.rentDueDay).toBe(l.day + RENT.everyDays);
+    l.needs.energy = 0;
+    const hours = l.sleep();
+    expect(l.needs.energy).toBeCloseTo(Math.min(100, hours * HOMES.chamber.rest));
+  });
+
+  it("buys a motorbike once", () => {
+    const l = life();
+    expect(l.buyBike()).toMatch(/costs/);
+    l.money = BIKE_PRICE + 10;
+    expect(l.buyBike()).toBeNull();
+    expect(l.money).toBe(10);
+    expect(l.buyBike()).toMatch(/already/);
+  });
+
+  it("friendship grows once a day per person", () => {
+    const l = life();
+    expect(l.chat("Esi")).toBe(12);
+    expect(l.chat("Esi")).toBe(0);
+    expect(friendLevel(l.friends.Esi)).toBe("Acquaintance");
+    l.minutes += 1440;
+    l.chat("Esi");
+    l.minutes += 1440;
+    l.chat("Esi");
+    expect(friendLevel(l.friends.Esi)).toBe("Friend");
+  });
+
+  it("goals pay once", () => {
+    const l = life();
+    expect(l.checkGoals()).toEqual([]);
+    l.takeJob("labourer");
+    l.certs.add("haulLicence");
+    const money = l.money;
+    expect(l.checkGoals().map((g) => g.id).sort()).toEqual(["cert", "hired"]);
+    expect(l.money).toBe(money + 30);
+    expect(l.checkGoals()).toEqual([]);
   });
 });

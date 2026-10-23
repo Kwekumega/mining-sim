@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { Random } from "../sim/random";
 import { GROUND, heightAt, onRamp, PIT, PIT_DEPTH, PIT_DISC, RAMP } from "./terrain";
-import { box, building, BuildingSpec, concreteMat, cylinder, Excavator, HaulTruck, label, mat, Person, SKINS, slab, windowGlow } from "./models";
-import { dirt } from "./textures";
+import { box, building, BuildingSpec, concreteMat, cylinder, Excavator, HaulTruck, label, Person, SKINS, slab, windowGlow } from "./models";
+import { dirt, normalMap } from "./textures";
+import { plant, Plants } from "./plants";
 import { decorate } from "./decor";
 
 /**
@@ -13,7 +14,7 @@ import { decorate } from "./decor";
 export type SpotId =
   | "home" | "chopBar" | "spot" | "pitch" | "training" | "kiosk" | "trotroTown" | "trotroMine"
   | "office" | "stockyard" | "sackPile" | "coreShed" | "drillRig" | "truckPark" | "truckSpawn"
-  | "shovel" | "loadPoint" | "tipPoint" | "controlRoom" | "crusher";
+  | "shovel" | "loadPoint" | "tipPoint" | "controlRoom" | "crusher" | "chamber" | "selfCon" | "bikeShop" | "bikePark";
 
 export interface Box2 {
   minX: number;
@@ -49,7 +50,12 @@ export interface World {
   benchSeats: { pos: THREE.Vector3; yaw: number }[];
   pitchBox: Box2;
   people: Person[];
+  plants: Plants;
+  pond: THREE.Mesh;
 }
+
+/** Shared by the ground shaders: 0 dry to 1 soaked, set by the weather. */
+export const groundWet = { value: 0 };
 
 const v = (x: number, z: number, y = heightAt(x, z)) => new THREE.Vector3(x, y, z);
 
@@ -123,10 +129,12 @@ export function buildWorld(seed: number): World {
   }
 
   // ---------- Town ----------
-  spots.home = put({ w: 18, d: 10, h: 5, wall: "#e9d8b4", roof: "#8d4b2e" }, -150, 104, "n", "Your room (compound house)", "#ffd36b");
-  names.home = "your room";
-  put({ w: 14, d: 10, h: 5, wall: "#d8c7a0", roof: "#7c4a30" }, -178, 104, "n");
-  put({ w: 12, d: 10, h: 4.5, wall: "#c9d6c2", roof: "#94573a" }, -200, 104, "n");
+  spots.home = put({ w: 18, d: 10, h: 5, wall: "#e9d8b4", roof: "#8d4b2e" }, -150, 104, "n", "Compound house: rooms", "#ffd36b");
+  names.home = "the compound house";
+  spots.chamber = put({ w: 14, d: 10, h: 5, wall: "#d8c7a0", roof: "#7c4a30" }, -178, 104, "n", "Chamber & hall to let", "#ffd36b");
+  names.chamber = "the chamber and hall flats";
+  spots.selfCon = put({ w: 12, d: 10, h: 4.5, wall: "#c9d6c2", roof: "#94573a", roofType: "flat" }, -200, 104, "n", "Self-contained flats", "#ffd36b");
+  names.selfCon = "the self-contained flats";
   put({ w: 12, d: 9, h: 4.5, wall: "#e6c9a8", roof: "#8f5236" }, -88, 104, "n");
   spots.chopBar = put({ w: 14, d: 9, h: 4.5, wall: "#2e8b57", roof: "#b5b5b0", roofType: "shed" }, -118, 104, "n", "Auntie Ama's Chop Bar", "#ffd36b");
   names.chopBar = "Auntie Ama's Chop Bar";
@@ -139,6 +147,9 @@ export function buildWorld(seed: number): World {
   names.training = "the Mining Training Centre";
   put({ w: 10, d: 8, h: 4, wall: "#b9cfe0", roof: "#80583c" }, -190, 76, "s");
   put({ w: 10, d: 8, h: 4, wall: "#e8b9a0", roof: "#80583c" }, -40, 76, "s");
+  spots.bikeShop = put({ w: 12, d: 9, h: 4.5, wall: "#f2b705", roof: "#3a3a3a", roofType: "flat" }, -6, 108, "n", "Okada Motors", "#ffe9b0");
+  names.bikeShop = "Okada Motors";
+  spots.bikePark = v(-12, 97);
 
   // Benches and tables in front of the chop bar and the spot.
   const benchSeats: { pos: THREE.Vector3; yaw: number }[] = [];
@@ -290,7 +301,11 @@ export function buildWorld(seed: number): World {
     scene.add(tank);
     colliders.push({ minX: tank.position.x - 4, maxX: tank.position.x + 4, minZ: tank.position.z - 4, maxZ: tank.position.z + 4 });
   }
-  const pond = new THREE.Mesh(new THREE.PlaneGeometry(50, 34), mat("#5f8f9a"));
+  // Tailings pond: still, murky water that mirrors the sky.
+  const waterNormals = normalMap(dirt(), "water", 0.8).clone();
+  waterNormals.needsUpdate = true;
+  waterNormals.repeat.set(6, 4);
+  const pond = new THREE.Mesh(new THREE.PlaneGeometry(50, 34), new THREE.MeshStandardMaterial({ color: "#3b5a5c", roughness: 0.06, metalness: 0.1, normalMap: waterNormals, normalScale: new THREE.Vector2(0.25, 0.25) }));
   pond.rotation.x = -Math.PI / 2;
   pond.position.set(236, 0.08, 10);
   scene.add(pond);
@@ -317,16 +332,33 @@ export function buildWorld(seed: number): World {
 
   decorate(scene, rng, colliders, roads);
 
-  // Trees, kept off roads, buildings, pads and the pit.
-  trees(scene, rng, (x, z) => {
-    if (Math.hypot(x - PIT.x, z - PIT.z) < PIT.radius + 14) return false;
-    if (x > PIT.x && x < PIT.x + RAMP.topDx + 10 && Math.abs(z - PIT.z) < 14) return false;
-    for (const b of colliders) if (x > b.minX - 4 && x < b.maxX + 4 && z > b.minZ - 4 && z < b.maxZ + 4) return false;
-    for (const road of roads) for (let i = 1; i < road.length; i++) if (distToSegment(x, z, road[i - 1], road[i]) < 7) return false;
-    if (x > pitchBox.minX - 4 && x < pitchBox.maxX + 4 && z > pitchBox.minZ - 4 && z < pitchBox.maxZ + 4) return false;
-    if (x > 20 && x < 140 && z > -40 && z < 30) return false;
-    if (x > 110 && x < 260 && z > -100 && z < 30) return false;
+  // Trees and grass, kept off roads, buildings, pads and the pit.
+  const offRoad = (x: number, z: number, margin: number) => {
+    for (const road of roads) for (let i = 1; i < road.length; i++) if (distToSegment(x, z, road[i - 1], road[i]) < margin) return false;
     return true;
+  };
+  const clear = (x: number, z: number, margin: number) => {
+    for (const b of colliders) if (x > b.minX - margin && x < b.maxX + margin && z > b.minZ - margin && z < b.maxZ + margin) return false;
+    return true;
+  };
+  const plants = plant(scene, rng, {
+    treeOk: (x, z) => {
+      if (Math.hypot(x - PIT.x, z - PIT.z) < PIT.radius + 14) return false;
+      if (x > PIT.x && x < PIT.x + RAMP.topDx + 10 && Math.abs(z - PIT.z) < 14) return false;
+      if (!clear(x, z, 4) || !offRoad(x, z, 7)) return false;
+      if (x > pitchBox.minX - 4 && x < pitchBox.maxX + 4 && z > pitchBox.minZ - 4 && z < pitchBox.maxZ + 4) return false;
+      if (x > 20 && x < 140 && z > -40 && z < 30) return false;
+      if (x > 110 && x < 260 && z > -100 && z < 30) return false;
+      return true;
+    },
+    palmZone: (x, z) => x < -10 && z > 20,
+    grassAt: (x, z) => {
+      if (inLease(x, z) || Math.hypot(x - PIT.x, z - PIT.z) < PIT_DISC.radius + 4) return 0;
+      if (!clear(x, z, 1.5) || !offRoad(x, z, 9)) return 0;
+      if (x > -215 && x < -20 && z > 62 && z < 116) return 0.05;
+      if (x > pitchBox.minX && x < pitchBox.maxX && z > pitchBox.minZ && z < pitchBox.maxZ) return 0.1;
+      return 0.6;
+    },
   });
 
   const trotroRoad = [v(-30, 92), v(-20, 90), v(5, 62), v(18, 46), v(20, 41)];
@@ -336,7 +368,7 @@ export function buildWorld(seed: number): World {
   const people: Person[] = [];
   return {
     scene, sun, hemi, colliders, footprints, roads, spots, names, shovel,
-    rigRod: rod, trayStack, millDrum: drum, outcropSites, haul, trotroRoad, townWalk, mineWalk, benchSeats, pitchBox, people,
+    rigRod: rod, trayStack, millDrum: drum, outcropSites, haul, trotroRoad, townWalk, mineWalk, benchSeats, pitchBox, people, plants, pond,
   };
 }
 
@@ -504,14 +536,31 @@ function ground(rng: Random, roads: [number, number][][]): THREE.Mesh {
 /** Ground material: the painted map, plus a fine pebbly detail texture tiled on top up close. */
 function groundMaterial(params: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
   const detail = dirt();
-  const m = new THREE.MeshStandardMaterial({ roughness: 0.95, ...params });
+  // Pebble relief at the fine detail scale.
+  const relief = normalMap(detail, "dirt", 2.5).clone();
+  relief.needsUpdate = true;
+  relief.repeat.set(160, 160);
+  const m = new THREE.MeshStandardMaterial({ roughness: 0.95, normalMap: relief, normalScale: new THREE.Vector2(0.9, 0.9), ...params });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.detailMap = { value: detail };
+    shader.uniforms.wetness = groundWet;
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nuniform sampler2D detailMap;")
+      .replace("#include <common>", "#include <common>\nuniform sampler2D detailMap;\nuniform float wetness;\nfloat puddle = 0.0;")
       .replace(
         "#include <map_fragment>",
-        "#include <map_fragment>\ndiffuseColor.rgb *= mix(vec3(1.0), texture2D(detailMap, vMapUv * 160.0).rgb * 1.3, 0.8) * mix(vec3(1.0), texture2D(detailMap, vMapUv * 23.0).rgb * 1.3, 0.35);",
+        `#include <map_fragment>
+diffuseColor.rgb *= mix(vec3(1.0), texture2D(detailMap, vMapUv * 160.0).rgb * 1.3, 0.8) * mix(vec3(1.0), texture2D(detailMap, vMapUv * 23.0).rgb * 1.3, 0.35);
+// Rain darkens the earth and pools in low patches.
+puddle = smoothstep(0.55, 0.75, texture2D(detailMap, vMapUv * 9.0).r) * wetness;
+diffuseColor.rgb *= 1.0 - wetness * 0.35 - puddle * 0.25;`,
+      )
+      .replace(
+        "#include <roughnessmap_fragment>",
+        "#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.45, wetness * 0.6);\nroughnessFactor = mix(roughnessFactor, 0.04, puddle);",
+      )
+      .replace(
+        "#include <normal_fragment_maps>",
+        "#include <normal_fragment_maps>\nnormal = normalize(mix(normal, normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz), puddle));",
       );
   };
   return m;
@@ -586,56 +635,33 @@ function pitTile(): THREE.Mesh {
 }
 
 function hills(scene: THREE.Scene, rng: Random) {
-  const geo = new THREE.IcosahedronGeometry(1, 1);
+  // Rolling forested hills on the horizon: a lumpy dome with dark tree cover and paler clearings.
+  const geo = new THREE.IcosahedronGeometry(1, 4);
+  const pos = geo.attributes.position;
+  const v3 = new THREE.Vector3();
+  const colours: number[] = [];
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    v3.fromBufferAttribute(pos, i);
+    const n = Math.sin(v3.x * 5.1 + v3.z * 2.3) * 0.5 + Math.sin(v3.z * 7.7 - v3.y * 3.1) * 0.35 + Math.sin(v3.x * 13 + v3.y * 11) * 0.15;
+    v3.multiplyScalar(1 + n * 0.08);
+    pos.setXYZ(i, v3.x, v3.y, v3.z);
+    c.setHSL(0.24 + n * 0.03, 0.32, 0.17 + Math.max(0, n) * 0.08);
+    colours.push(c.r, c.g, c.b);
+  }
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(colours, 3));
+  geo.computeVertexNormals();
+  const hillMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
   for (let i = 0; i < 26; i++) {
     const a = (i / 26) * Math.PI * 2 + rng.between(-0.08, 0.08);
     const r = rng.between(330, 380);
-    const m = new THREE.Mesh(geo, mat(i % 3 ? "#4c5a34" : "#57653a"));
+    const m = new THREE.Mesh(geo, hillMat);
     const s = rng.between(40, 80);
     m.scale.set(s * 1.6, s * rng.between(0.5, 0.9), s * 1.3);
+    m.rotation.y = rng.next() * 6;
     m.position.set(Math.cos(a) * r, -s * 0.15, Math.sin(a) * r);
     scene.add(m);
   }
-}
-
-function trees(scene: THREE.Scene, rng: Random, ok: (x: number, z: number) => boolean) {
-  const spots: [number, number, number][] = [];
-  for (let tries = 0; tries < 5000 && spots.length < 380; tries++) {
-    const x = rng.between(GROUND.minX + 6, GROUND.maxX - 6);
-    const z = rng.between(GROUND.minZ + 6, GROUND.maxZ - 6);
-    if (ok(x, z)) spots.push([x, z, rng.between(0.8, 1.5)]);
-  }
-  const bark = new THREE.MeshStandardMaterial({ color: "#4a3a2c", roughness: 1 });
-  const leaf = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.9, flatShading: true });
-  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.28, 0.55, 5, 7), bark, spots.length);
-  // Three clumps per tree give a broken, natural canopy.
-  const clumpGeo = new THREE.IcosahedronGeometry(2.4, 1);
-  const pos = clumpGeo.attributes.position;
-  const jr = new Random(9);
-  for (let i = 0; i < pos.count; i++) pos.setXYZ(i, pos.getX(i) * (0.85 + jr.next() * 0.3), pos.getY(i) * (0.75 + jr.next() * 0.2), pos.getZ(i) * (0.85 + jr.next() * 0.3));
-  clumpGeo.computeVertexNormals();
-  const crowns = new THREE.InstancedMesh(clumpGeo, leaf, spots.length * 3);
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const up = new THREE.Vector3(0, 1, 0);
-  spots.forEach(([x, z, s], i) => {
-    q.setFromAxisAngle(new THREE.Vector3(rng.between(-1, 1), 0, rng.between(-1, 1)).normalize(), rng.between(0, 0.12));
-    m.compose(new THREE.Vector3(x, 2.5 * s, z), q, new THREE.Vector3(s, s, s));
-    trunks.setMatrixAt(i, m);
-    const hue = 0.2 + rng.next() * 0.06;
-    for (let k = 0; k < 3; k++) {
-      const a = k * 2.1 + rng.next();
-      q.setFromAxisAngle(up, rng.next() * 6);
-      const off = new THREE.Vector3(Math.cos(a) * 1.4 * s, (5.2 + k * 0.7 + rng.next()) * s, Math.sin(a) * 1.4 * s);
-      const sc = s * (0.9 + rng.next() * 0.45);
-      m.compose(new THREE.Vector3(x + off.x, off.y, z + off.z), q, new THREE.Vector3(sc * 1.2, sc, sc * 1.2));
-      crowns.setMatrixAt(i * 3 + k, m);
-      crowns.setColorAt(i * 3 + k, new THREE.Color().setHSL(hue, 0.32 + rng.next() * 0.12, 0.11 + rng.next() * 0.06));
-    }
-  });
-  trunks.castShadow = crowns.castShadow = true;
-  crowns.receiveShadow = true;
-  scene.add(trunks, crowns);
 }
 
 export function randomLook(rng: Random, worker: boolean): import("./models").Look {

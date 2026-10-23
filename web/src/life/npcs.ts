@@ -265,6 +265,8 @@ export class TruckAI implements LoadClient {
 /** Someone walking between points, stopping now and then. */
 export class Walker {
   readonly person: Person;
+  /** Set by the game so the player can chat with them. */
+  name = "";
   private target: THREE.Vector3;
   private wait: number;
   private readonly speed: number;
@@ -277,6 +279,14 @@ export class Walker {
     this.wait = rng.between(0, 4);
     this.speed = rng.between(2.6, 3.6);
     scene.add(this.person.group);
+  }
+
+  /** Stops for a chat and turns to face (x, z). */
+  hold(x: number, z: number, seconds: number): void {
+    const g = this.person.group;
+    this.wait = Math.max(this.wait, seconds);
+    g.rotation.y = Math.atan2(x - g.position.x, z - g.position.z);
+    this.person.animate(0, 0);
   }
 
   private pick(): THREE.Vector3 {
