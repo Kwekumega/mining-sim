@@ -48,14 +48,14 @@
             "x64"
           ]
         }
-      ],
-      "artifactName": "MineLife-${version}-${arch}-${target}.${ext}"
+      ]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "MineLife"
+      "shortcutName": "MineLife",
+      "artifactName": "MineLife-${version}-setup.${ext}"
     },
     "portable": {
       "artifactName": "MineLife-${version}-portable.exe"
