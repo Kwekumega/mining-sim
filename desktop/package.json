@@ -1,0 +1,78 @@
+{
+  "name": "minelife",
+  "productName": "MineLife",
+  "version": "0.4.0",
+  "description": "MineLife: a life sim in Sikakrom, a Ghanaian gold-mining town.",
+  "author": "Kwekumega",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kwekumega/mining-sim.git"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "app": "node copy-game.js",
+    "start": "npm run app && electron .",
+    "dist:win": "npm run app && electron-builder --win --publish never",
+    "dist:linux": "npm run app && electron-builder --linux --publish never",
+    "dist:mac": "npm run app && electron-builder --mac --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.16.1"
+  },
+  "build": {
+    "appId": "com.kwekumega.minelife",
+    "productName": "MineLife",
+    "files": [
+      "main.js",
+      "app/**"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "MineLife",
+      "artifactName": "MineLife-${version}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "MineLife-${version}-portable.exe"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        "AppImage"
+      ],
+      "category": "Game"
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.simulation-games"
+    }
+  }
+}

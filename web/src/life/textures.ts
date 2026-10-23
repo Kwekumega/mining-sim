@@ -198,6 +198,153 @@ export function dirt(): THREE.CanvasTexture {
 }
 
 /**
+ * A tangent-space normal map from a texture's brightness (Sobel), so surfaces catch light
+ * like real relief. `strength` scales the slopes; `invert` treats dark as raised.
+ */
+export function normalMap(src: THREE.CanvasTexture, key: string, strength = 2, invert = false): THREE.CanvasTexture {
+  const id = `n|${key}`;
+  if (cache[id]) return cache[id];
+  const img = src.image as HTMLCanvasElement;
+  const size = img.width;
+  const [c, ctx] = canvas(size);
+  const data = img.getContext("2d")!.getImageData(0, 0, size, size).data;
+  const lum = new Float32Array(size * size);
+  for (let i = 0; i < size * size; i++) lum[i] = (data[i * 4] * 0.3 + data[i * 4 + 1] * 0.59 + data[i * 4 + 2] * 0.11) / 255;
+  const at = (x: number, y: number) => lum[((y + size) % size) * size + ((x + size) % size)];
+  const out = ctx.createImageData(size, size);
+  const sign = invert ? -1 : 1;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1)) * strength * sign;
+      const dy = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1)) * strength * sign;
+      const len = Math.hypot(dx, dy, 1);
+      const o = (y * size + x) * 4;
+      out.data[o] = ((-dx / len) * 0.5 + 0.5) * 255;
+      out.data[o + 1] = ((dy / len) * 0.5 + 0.5) * 255;
+      out.data[o + 2] = (1 / len) * 0.5 * 255 + 127.5;
+      out.data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+  return (cache[id] = finish(c, false));
+}
+
+/** Bark: vertical fissures. */
+export function bark(): THREE.CanvasTexture {
+  if (cache.bark) return cache.bark;
+  const size = 256;
+  const [c, ctx] = canvas(size);
+  const r = rand(91);
+  ctx.fillStyle = "#8a7a68";
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 140; i++) {
+    const x = r() * size;
+    ctx.strokeStyle = `rgba(30,22,16,${0.3 + r() * 0.5})`;
+    ctx.lineWidth = 1 + r() * 3;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    let xx = x;
+    for (let y = 0; y <= size; y += 16) {
+      xx += (r() - 0.5) * 6;
+      ctx.lineTo(xx, y);
+    }
+    ctx.stroke();
+  }
+  speckle(ctx, size, r, 4000, 0.3);
+  return (cache.bark = finish(c));
+}
+
+/** A cluster of leaves on transparent ground, for leaf cards on trees. */
+export function leaves(kind: "broad" | "palm"): THREE.CanvasTexture {
+  const id = `leaves|${kind}`;
+  if (cache[id]) return cache[id];
+  const size = 256;
+  const [c, ctx] = canvas(size);
+  const r = rand(kind === "palm" ? 7 : 5);
+  if (kind === "broad") {
+    for (let i = 0; i < 260; i++) {
+      const a = r() * Math.PI * 2;
+      const d = Math.sqrt(r()) * size * 0.42;
+      const x = size / 2 + Math.cos(a) * d;
+      const y = size / 2 + Math.sin(a) * d;
+      const g = 70 + r() * 90;
+      ctx.fillStyle = `rgb(${g * 0.55},${g},${g * 0.35})`;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(r() * Math.PI * 2);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 9 + r() * 6, 4 + r() * 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  } else {
+    // One palm frond: a midrib with leaflets, drawn along the card's length.
+    ctx.strokeStyle = "#6b6a35";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(size / 2, 0);
+    ctx.lineTo(size / 2, size);
+    ctx.stroke();
+    for (let y = 6; y < size - 4; y += 5) {
+      const len = Math.sin((y / size) * Math.PI) * size * 0.46 + 6;
+      for (const side of [-1, 1]) {
+        const g = 90 + r() * 70;
+        ctx.strokeStyle = `rgb(${g * 0.6},${g},${g * 0.32})`;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(size / 2, y);
+        ctx.quadraticCurveTo(size / 2 + side * len * 0.6, y + 4, size / 2 + side * len, y + 14 + r() * 8);
+        ctx.stroke();
+      }
+    }
+  }
+  const t = finish(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return (cache[id] = t);
+}
+
+/** A soft round shadow, for contact shadows under people, vehicles and trees. */
+export function blob(): THREE.CanvasTexture {
+  if (cache.blob) return cache.blob;
+  const size = 128;
+  const [c, ctx] = canvas(size);
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0, "rgba(0,0,0,0.75)");
+  g.addColorStop(0.5, "rgba(0,0,0,0.4)");
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  return (cache.blob = finish(c, false));
+}
+
+/** Grass blades on transparent ground, for grass tufts. */
+export function grassBlades(): THREE.CanvasTexture {
+  if (cache.grass) return cache.grass;
+  const w = 128;
+  const hgt = 128;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = hgt;
+  const ctx = c.getContext("2d")!;
+  const r = rand(61);
+  for (let i = 0; i < 46; i++) {
+    const x = 8 + r() * (w - 16);
+    const top = r() * hgt * 0.55;
+    const lean = (r() - 0.5) * 30;
+    const g = 80 + r() * 80;
+    ctx.strokeStyle = `rgb(${g * 0.75},${g},${g * 0.38})`;
+    ctx.lineWidth = 2 + r() * 2;
+    ctx.beginPath();
+    ctx.moveTo(x, hgt);
+    ctx.quadraticCurveTo(x + lean * 0.3, (hgt + top) / 2, x + lean, top);
+    ctx.stroke();
+  }
+  const t = finish(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return (cache.grass = t);
+}
+
+/**
  * Rewrites a box's UVs so a texture tiles in world units: `tile` units per repeat across,
  * and either per-`tile` or once over the full height (for wall textures with grime at the foot).
  */

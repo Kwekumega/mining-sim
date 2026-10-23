@@ -189,3 +189,10 @@ kbd { display: inline-block; min-width: 1.6em; font: 700 0.8em var(--display); p
   .need .track { height: 8px; }
   .need .icon { font-size: 13px; }
 }
+nav.tabs { flex-wrap: wrap; }
+nav.tabs button { min-width: 28%; }
+.level { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font: 600 0.75rem var(--display); vertical-align: 2px; }
+.xpbar { height: 5px; border-radius: 3px; background: var(--card-2); margin-top: 5px; overflow: hidden; }
+.xpbar i { display: block; height: 100%; background: var(--accent); }
+.milestone.done b::before { content: "✓ "; color: #6fd08c; }
+.milestone:not(.done) { opacity: 0.8; }

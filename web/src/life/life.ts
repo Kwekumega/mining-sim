@@ -8,10 +8,10 @@ export type PlaceId =
   | "home" | "chopBar" | "spot" | "pitch" | "training" | "trotroTown" | "trotroMine"
   | "mineGate" | "stockyard" | "coreShed" | "truckPark" | "shovel" | "crusher" | "controlRoom" | "office";
 
-export type JobId = "labourer" | "coreTech" | "driver" | "excavator" | "plant" | "geologist";
-export type CertId = "haulLicence" | "excavatorTicket" | "plantCourse" | "geoDiploma";
+export type JobId = "labourer" | "coreTech" | "driver" | "excavator" | "plant" | "geologist" | "supervisor";
+export type CertId = "haulLicence" | "excavatorTicket" | "plantCourse" | "geoDiploma" | "safetyCert";
 /** How the work is done in the world. */
-export type TaskKind = "carry" | "core" | "haul" | "load" | "panel" | "map";
+export type TaskKind = "carry" | "core" | "haul" | "load" | "panel" | "map" | "inspect";
 
 export interface Job {
   id: JobId;
@@ -36,7 +36,15 @@ export const JOBS: Record<JobId, Job> = {
   plant: { id: "plant", title: "Plant Operator", place: "controlRoom", pay: 40, task: "panel", blurb: "Keep the mill in the green: balance feed and water for each batch.", needsCert: "plantCourse", needsShifts: { job: "labourer", count: 2 } },
   excavator: { id: "excavator", title: "Excavator Operator", place: "shovel", pay: 35, task: "load", blurb: "Load each haul truck that pulls up at the face.", needsCert: "excavatorTicket", needsShifts: { job: "driver", count: 2 } },
   geologist: { id: "geologist", title: "Field Geologist", place: "coreShed", pay: 70, task: "map", blurb: "Map the flagged drill sites and outcrops on the lease.", needsCert: "geoDiploma", needsShifts: { job: "coreTech", count: 2 } },
+  supervisor: { id: "supervisor", title: "Shift Supervisor", place: "office", pay: 90, task: "inspect", blurb: "Walk the site, inspect each work area and call out the hazards.", needsCert: "safetyCert", needsShifts: { job: "driver", count: 2 } },
 };
+
+/** Experience needed for each skill level: level n needs 25·n² XP, up to level 10. */
+export const MAX_LEVEL = 10;
+export const levelFor = (xp: number) => Math.min(MAX_LEVEL, Math.floor(Math.sqrt(xp / 25)));
+export const xpForLevel = (level: number) => 25 * level * level;
+/** Each skill level adds 5% to the pay for that job. */
+export const levelPay = (level: number) => 1 + 0.05 * level;
 
 export interface Cert {
   id: CertId;
@@ -50,7 +58,30 @@ export const CERTS: Record<CertId, Cert> = {
   plantCourse: { id: "plantCourse", title: "Process plant course", cost: 500, hours: 8 },
   excavatorTicket: { id: "excavatorTicket", title: "Excavator ticket", cost: 600, hours: 8 },
   geoDiploma: { id: "geoDiploma", title: "Geology field diploma", cost: 900, hours: 12 },
+  safetyCert: { id: "safetyCert", title: "Mine safety supervisor certificate", cost: 700, hours: 8 },
 };
+
+export type HomeId = "room" | "chamber" | "selfCon";
+export interface Home {
+  id: HomeId;
+  title: string;
+  /** Weekly rent. */
+  rent: number;
+  /** Energy per hour of sleep. */
+  rest: number;
+  blurb: string;
+}
+export const HOMES: Record<HomeId, Home> = {
+  room: { id: "room", title: "Single room", rent: 250, rest: 12, blurb: "One room in a compound house, shared bathroom." },
+  chamber: { id: "chamber", title: "Chamber and hall", rent: 450, rest: 13.5, blurb: "A bedroom and a hall with a TV. Sleep better and relax at home." },
+  selfCon: { id: "selfCon", title: "Self-contained flat", rent: 800, rest: 15, blurb: "Your own bathroom, kitchen and a fan. The best sleep in town." },
+};
+
+export const BIKE_PRICE = 1800;
+
+/** Friendship points: 0 to 100. */
+export const FRIEND_LEVELS: [number, string][] = [[0, "Stranger"], [10, "Acquaintance"], [30, "Friend"], [60, "Good friend"], [90, "Best friend"]];
+export const friendLevel = (points: number) => FRIEND_LEVELS.reduce((best, [min, name]) => (points >= min ? name : best), "Stranger");
 
 export interface Offer {
   id: string;
@@ -101,6 +132,30 @@ export type Background = "family" | "hustler";
 
 export const RENT = { amount: 250, everyDays: 7, graceDays: 3 };
 
+export interface Goal {
+  id: string;
+  title: string;
+  hint: string;
+  reward: number;
+  done: (l: Life) => boolean;
+}
+
+/** Milestones listed on the phone. Each pays a small bonus when first reached. */
+export const GOALS: Goal[] = [
+  { id: "hired", title: "Get hired", hint: "Take any job from your phone.", reward: 0, done: (l) => l.job !== null },
+  { id: "shift", title: "Finish a full shift", hint: `Do ${TASKS_PER_SHIFT} tasks before clocking out.`, reward: 20, done: (l) => Object.values(l.shiftsWorked).some((n) => n > 0) },
+  { id: "cert", title: "Earn a certificate", hint: "Study at the Mining Training Centre.", reward: 30, done: (l) => l.certs.size > 0 },
+  { id: "friend", title: "Make a friend", hint: "Chat with the same person on a few days.", reward: 20, done: (l) => Object.values(l.friends).some((p) => p >= 30) },
+  { id: "wages1k", title: "Earn GH₵ 1,000 in wages", hint: "Work your shifts.", reward: 50, done: (l) => l.totalEarned >= 1000 },
+  { id: "level5", title: "Reach skill level 5", hint: "Keep doing one job well.", reward: 80, done: (l) => Object.values(l.xp).some((x) => levelFor(x) >= 5) },
+  { id: "bike", title: "Buy a motorbike", hint: `Okada Motors sells one for GH₵ ${BIKE_PRICE.toLocaleString("en")}.`, reward: 0, done: (l) => l.ownsBike },
+  { id: "chamber", title: "Move to a bigger home", hint: "Ask the landlord about a chamber and hall.", reward: 0, done: (l) => l.home !== "room" },
+  { id: "geologist", title: "Become a Field Geologist", hint: "Needs the diploma and core shed shifts.", reward: 100, done: (l) => l.job === "geologist" || l.shiftsWorked.geologist > 0 },
+  { id: "supervisor", title: "Become Shift Supervisor", hint: "Needs the safety certificate and driver shifts.", reward: 150, done: (l) => l.job === "supervisor" || l.shiftsWorked.supervisor > 0 },
+  { id: "bestFriend", title: "Have a best friend", hint: "Keep chatting every day.", reward: 50, done: (l) => Object.values(l.friends).some((p) => p >= 90) },
+  { id: "savings", title: "Save GH₵ 5,000", hint: "Money in your MoMo wallet.", reward: 0, done: (l) => l.money >= 5000 },
+];
+
 /**
  * One person's life in the mining town: needs, money, rent, the clock, a job and its shifts,
  * training, and the odd surprise. Pure state, so it is easy to test; the 3D world calls into it.
@@ -115,7 +170,17 @@ export class Life {
   onShift = false;
   shiftPay = 0;
   shiftTasks = 0;
-  readonly shiftsWorked: Record<JobId, number> = { labourer: 0, coreTech: 0, driver: 0, plant: 0, excavator: 0, geologist: 0 };
+  readonly shiftsWorked: Record<JobId, number> = { labourer: 0, coreTech: 0, driver: 0, plant: 0, excavator: 0, geologist: 0, supervisor: 0 };
+  /** Experience in each job; levels raise pay. */
+  readonly xp: Record<JobId, number> = { labourer: 0, coreTech: 0, driver: 0, plant: 0, excavator: 0, geologist: 0, supervisor: 0 };
+  /** Set by completeTask when the task took the job to a new level. */
+  levelledUp: number | null = null;
+  home: HomeId = "room";
+  ownsBike = false;
+  /** Friendship points by person's name, and the day you last chatted. */
+  readonly friends: Record<string, number> = {};
+  readonly lastChat: Record<string, number> = {};
+  readonly goalsDone = new Set<string>();
   readonly certs = new Set<CertId>();
   rentDueDay = 1 + RENT.everyDays;
   evicted = false;
@@ -149,6 +214,12 @@ export class Life {
   }
   get inShiftHours(): boolean {
     return this.hour >= SHIFT.start && this.hour < SHIFT.end;
+  }
+  get rent(): number {
+    return HOMES[this.home].rent;
+  }
+  level(job: JobId): number {
+    return levelFor(this.xp[job]);
   }
   get rentLate(): number {
     return Math.max(0, this.day - this.rentDueDay);
@@ -185,7 +256,7 @@ export class Life {
       this.evicted = true;
       return {
         title: "Locked out",
-        text: `The landlord changed the padlock. You owe GH₵ ${RENT.amount}. Pay the rent from your phone to get your room back.`,
+        text: `The landlord changed the padlock. You owe GH₵ ${this.rent}. Pay the rent from your phone to get your room back.`,
         choices: [{ label: "OK", apply: () => "" }],
       };
     }
@@ -218,7 +289,8 @@ export class Life {
     if (this.evicted) return 0;
     const toSix = ((30 - this.hour) % 24) || 24;
     const hours = Math.min(8, toSix);
-    this.needs.energy = clamp(this.needs.energy + hours * 12);
+    this.needs.energy = clamp(this.needs.energy + hours * HOMES[this.home].rest);
+    if (this.home !== "room") this.adjust({ fun: hours * (this.home === "selfCon" ? 1.5 : 1) });
     this.adjust({ hunger: -hours * 2, hygiene: -hours * 1.5, fun: -hours * 0.5 });
     if (this.onShift) this.clockOut();
     this.minutes += hours * 60;
@@ -256,9 +328,13 @@ export class Life {
   /** One finished task pays straight into the shift's wages. Returns cedis earned. */
   completeTask(quality = 1): number {
     if (!this.onShift || !this.job) return 0;
-    const pay = Math.round(JOBS[this.job].pay * quality * this.performance * this.payBoost);
+    const before = this.level(this.job);
+    const pay = Math.round(JOBS[this.job].pay * levelPay(before) * quality * this.performance * this.payBoost);
     this.shiftPay += pay;
     this.shiftTasks++;
+    this.xp[this.job] += Math.round(10 * quality);
+    const after = this.level(this.job);
+    this.levelledUp = after > before ? after : null;
     return pay;
   }
 
@@ -288,10 +364,54 @@ export class Life {
   }
 
   payRent(): string | null {
-    if (!this.spend(RENT.amount)) return `Rent is GH₵ ${RENT.amount}.`;
+    if (!this.spend(this.rent)) return `Rent is GH₵ ${this.rent}.`;
     this.rentDueDay += RENT.everyDays;
     this.evicted = false;
     return null;
+  }
+
+  /** Moves to another home, paying the first week up front. Returns an error, or null. */
+  moveHome(id: HomeId): string | null {
+    if (id === this.home) return "You already live here.";
+    if (this.evicted) return "Clear your old rent first.";
+    const cost = HOMES[id].rent;
+    if (!this.spend(cost)) return `The first week's rent is GH₵ ${cost}.`;
+    this.home = id;
+    this.rentDueDay = this.day + RENT.everyDays;
+    this.passTime(60);
+    return null;
+  }
+
+  buyBike(): string | null {
+    if (this.ownsBike) return "You already have a bike.";
+    if (!this.spend(BIKE_PRICE)) return `The bike costs GH₵ ${BIKE_PRICE}.`;
+    this.ownsBike = true;
+    return null;
+  }
+
+  /** A short chat. Friendship grows once a day per person. Returns points gained, or 0 if you already talked today. */
+  chat(name: string): number {
+    this.passTime(10);
+    if (this.lastChat[name] === this.day) {
+      this.adjust({ social: 3 });
+      return 0;
+    }
+    this.lastChat[name] = this.day;
+    const before = this.friends[name] ?? 0;
+    const gain = before >= 30 ? 10 : 12;
+    this.friends[name] = Math.min(100, before + gain);
+    this.adjust({ social: 12 + Math.floor(before / 10), fun: before >= 30 ? 6 : 2 });
+    return gain;
+  }
+
+  /** Goals reached since the last call; pays their rewards. */
+  checkGoals(): Goal[] {
+    const fresh = GOALS.filter((g) => !this.goalsDone.has(g.id) && g.done(this));
+    for (const g of fresh) {
+      this.goalsDone.add(g.id);
+      this.money += g.reward;
+    }
+    return fresh;
   }
 
   takeTrotro(): boolean {

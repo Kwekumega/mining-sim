@@ -1,20 +1,24 @@
 import * as THREE from "three";
 import { Random } from "../sim/random";
-import { CERTS, CertId, JOBS, JobId, Life, LifeEvent, Need, NEEDS, Offer, OFFERS, PlaceId, RENT, SHIFT, TASKS_PER_SHIFT } from "./life";
+import { BIKE_PRICE, CERTS, CertId, friendLevel, GOALS, HomeId, HOMES, JOBS, JobId, levelFor, Life, LifeEvent, MAX_LEVEL, Need, NEEDS, Offer, OFFERS, PlaceId, SHIFT, TASKS_PER_SHIFT, xpForLevel } from "./life";
 import { cedis, Choice, h, Hud, NEED_INFO } from "./hud";
-import { box, HaulTruck, lampGlow, Look, Person, SKINS, windowGlow } from "./models";
-import { FilmLook } from "./look";
+import { box, HaulTruck, lampGlow, Look, Motorbike, Person, SKINS, windowGlow } from "./models";
+import { FilmLook, QUALITY_NAMES } from "./look";
+import { wind } from "./plants";
+import { Dust, Rain, WeatherClock } from "./weather";
 import { Football, LoadClient, PASSES_PER_TRUCK, placeVehicle, Shovel, TrotroBus, TruckAI, turnToward, Walker } from "./npcs";
 import { GROUND, heightAt } from "./terrain";
-import { buildWorld, SpotId, TOWN_NAME, World } from "./world";
+import { buildWorld, groundWet, inLease, SpotId, TOWN_NAME, World } from "./world";
 
 const SAVE_KEY = "minelife-sikakrom-v1";
+const GRAPHICS_KEY = "minelife-graphics";
+const BIKE_SPEED = 21;
 const WALK = 6.5;
 const RUN = 11;
 /** Game minutes that pass per real second. */
 const MINUTES_PER_SECOND = 1;
 
-type Mode = "walk" | "truck" | "excavator";
+type Mode = "walk" | "truck" | "excavator" | "bike";
 type Rock = "quartz" | "laterite" | "granite" | "schist";
 
 const ROCKS: Record<Rock, { name: string; colour: string; note: string }> = {
@@ -43,8 +47,55 @@ interface Outcrop {
 }
 
 const PLACE_SPOT: Partial<Record<PlaceId, SpotId>> = {
-  stockyard: "stockyard", coreShed: "coreShed", truckPark: "truckPark", controlRoom: "controlRoom", shovel: "shovel",
+  stockyard: "stockyard", coreShed: "coreShed", truckPark: "truckPark", controlRoom: "controlRoom", shovel: "shovel", office: "office",
 };
+
+const HOME_SPOT: Record<HomeId, SpotId> = { room: "home", chamber: "chamber", selfCon: "selfCon" };
+
+const TOWN_NAMES = ["Esi", "Kojo", "Abena", "Yaw", "Akosua", "Kwesi", "Adwoa", "Fiifi", "Efua", "Nana", "Ama", "Kofi", "Afia", "Ekow", "Serwaa", "Kwabena", "Dede", "Mensah", "Aba", "Yaa", "Paa Kwesi"];
+
+/** Small talk, by how well you know them. */
+const CHAT_LINES: Record<"new" | "known" | "close", string[]> = {
+  new: [
+    "\u201cYou're new in town? Welcome. The chop bar does the best waakye.\u201d",
+    "\u201cThey're hiring at the mine. Start at the stockyard and work up.\u201d",
+    "\u201cThe trotro to the gate is cheaper than walking in this sun.\u201d",
+    "\u201cDon't let the landlord catch you late on rent. He changes the padlock.\u201d",
+  ],
+  known: [
+    "\u201cHow was the shift? My cousin says the pit flooded again.\u201d",
+    "\u201cIf you get your haul licence, driving pays better than carrying sacks.\u201d",
+    "\u201cCome and watch the match on Saturday. Hearts against Kotoko!\u201d",
+    "\u201cThe geologists find the gold, the drivers move it, and we all eat.\u201d",
+  ],
+  close: [
+    "\u201cMy brother, my sister! Sit down, let me tell you the gist.\u201d",
+    "\u201cYou're doing well. One day you'll be supervisor and forget us.\u201d",
+    "\u201cIf you ever need help, you call me. That's what friends are for.\u201d",
+  ],
+};
+
+interface Hazard {
+  areas: SpotId[];
+  text: string;
+  right: string;
+  wrong: [string, string];
+}
+
+/** Things a shift supervisor has to catch on the site walk. */
+const HAZARDS: Hazard[] = [
+  { areas: ["drillRig"], text: "A driller is working next to the rig without hearing protection.", right: "Stop the job until he has earplugs", wrong: ["Let him finish the run", "Note it for next week"] },
+  { areas: ["truckPark"], text: "A truck is parked on the slope with no wheel chocks.", right: "Get it chocked and moved to the bay", wrong: ["Nothing, the handbrake is on", "Tell the driver to park closer"] },
+  { areas: ["truckPark", "crusher"], text: "A worker is walking behind a reversing haul truck.", right: "Radio the driver to stop and clear the person", wrong: ["Sound your horn and carry on", "Leave it, the driver has mirrors"] },
+  { areas: ["stockyard"], text: "Sample sacks are stacked four high and leaning.", right: "Restack them two high on pallets", wrong: ["Tape the stack together", "Put a warning sign up"] },
+  { areas: ["controlRoom"], text: "The mill guard is off for cleaning and the mill is still running.", right: "Isolate and lock out the mill, then refit the guard", wrong: ["Clean quickly while it runs", "Turn the mill down to half speed"] },
+  { areas: ["controlRoom"], text: "An operator is at the leach tanks with no gloves or respirator.", right: "Send him for PPE before he goes back", wrong: ["Tell him to hold his breath", "Let him finish, it's quick"] },
+  { areas: ["shovel"], text: "Loose rock is hanging on the bench face above the excavator.", right: "Pull the machine back and have the face scaled", wrong: ["Dig faster before it falls", "Park a truck under it as a shield"] },
+  { areas: ["crusher"], text: "A diesel hose at the crusher is leaking onto the pad.", right: "Shut off the supply and spread absorbent", wrong: ["Hose it into the drain", "Cover it with sand later"] },
+  { areas: ["coreShed"], text: "The core shed fire extinguisher's tag is a year out of date.", right: "Get it swapped for a serviced one today", wrong: ["It still looks fine", "Move it out of sight"] },
+  { areas: ["coreShed", "stockyard"], text: "A forklift is lifting a pallet with someone standing on the forks.", right: "Stop the lift and get him off", wrong: ["Tell him to hold on tight", "Let it go, it's a short lift"] },
+];
+const INSPECT_AREAS: SpotId[] = ["stockyard", "coreShed", "truckPark", "drillRig", "controlRoom", "crusher", "shovel"];
 
 interface Profile {
   name: string;
@@ -55,6 +106,7 @@ export class Game {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly look: FilmLook;
   private bakedAt = -99;
+  private bakedRain = 0;
   private readonly camera = new THREE.PerspectiveCamera(55, 1, 0.5, 900);
   private readonly world: World;
   private readonly hud: Hud;
@@ -94,6 +146,15 @@ export class Game {
   private readonly rng: Random;
   private shadows = true;
   private readonly labels: THREE.Sprite[] = [];
+  private readonly rain: Rain;
+  private readonly dust: Dust;
+  private weather: WeatherClock;
+  private readonly bike: Motorbike;
+  private readonly bikeState = { x: 0, z: 0, yaw: 0, speed: 0, steer: 0 };
+  private dustTimer = 0;
+  private goalTimer = 0;
+  private inspectAt: SpotId | null = null;
+  private time = 0;
 
   constructor(private readonly container: HTMLElement) {
     const seed = 20261022;
@@ -117,7 +178,7 @@ export class Game {
     this.shovel.onPass = (c, full) => {
       if (c === this.myClient) this.hud.toast(full ? "Loaded with ore. Drive up the ramp to the crusher." : `Bucket ${c.passes} of ${PASSES_PER_TRUCK} in your tray.`, full ? "good" : "info");
       if (this.shovel.playerControlled && full) {
-        const pay = this.life.completeTask(1);
+        const pay = this.task(1);
         this.hud.toast(`Truck loaded. +${cedis(pay)} (${this.life.shiftTasks}/${TASKS_PER_SHIFT} tasks)`, "gold");
       }
     };
@@ -197,6 +258,26 @@ export class Game {
       if ((o as THREE.Sprite).isSprite) this.labels.push(o as THREE.Sprite);
     });
 
+    // Townspeople have names you can learn by chatting.
+    const names = [...TOWN_NAMES];
+    this.walkers.forEach((w, i) => (w.name = names[i % names.length] + (i >= names.length ? " Jnr" : "")));
+
+    this.rain = new Rain(this.world.scene);
+    this.dust = new Dust(this.world.scene);
+    this.weather = new WeatherClock(new Random(seed + 3));
+
+    // Bikes for sale out front of Okada Motors, and your own once you buy one.
+    for (const [dx, colour] of [[-3, "#1f6fb2"], [0, "#b8241f"], [3, "#2a2a2a"]] as const) {
+      const b = new Motorbike(colour);
+      const p = this.world.spots.bikeShop;
+      b.group.position.set(p.x + dx, 0, p.z + 1.5);
+      b.group.rotation.y = 0.4;
+      this.world.scene.add(b.group);
+    }
+    this.bike = new Motorbike("#d6342c");
+    this.bike.group.visible = false;
+    this.world.scene.add(this.bike.group);
+
     this.bindInput();
     window.addEventListener("resize", () => this.resize());
     this.resize();
@@ -209,6 +290,7 @@ export class Game {
 
     // Show the town behind the title screen.
     this.pos.copy(this.world.spots.home).add(new THREE.Vector3(0, 0, -4));
+    this.setGraphics(this.defaultQuality());
     this.renderer.setAnimationLoop(() => this.frame());
     this.titleScreen();
     (window as unknown as { __minelife: Game }).__minelife = this;
@@ -269,9 +351,14 @@ export class Game {
     this.pos.set(at ? at[0] : home.x, 0, at ? at[1] : home.z + 1);
     this.yaw = Math.PI;
     this.cam.yaw = Math.PI - 0.5;
+    this.mode = "walk";
+    this.bike.group.visible = this.life.ownsBike;
+    if (this.life.ownsBike && !this.bikeState.x) this.parkBike(this.world.spots.bikePark.x, this.world.spots.bikePark.z, Math.PI);
+    else this.parkBike(this.bikeState.x, this.bikeState.z, this.bikeState.yaw);
     this.started = true;
     this.paused = false;
     this.clock.getDelta();
+    this.refreshHud();
     if (!resumed) {
       const rich = this.life.background === "family";
       this.hud.dialog(
@@ -282,8 +369,8 @@ export class Game {
           h("p", null, rich
             ? `Your family helped you move to ${TOWN_NAME} with ${cedis(this.life.money)} in your MoMo wallet.`
             : `You came to ${TOWN_NAME} with ${cedis(this.life.money)} and a bag. Everyone starts somewhere.`),
-          h("p", null, `Rent on your room is ${cedis(RENT.amount)} a week, due on day ${this.life.rentDueDay}. The mine hires from 06:00 to 18:00.`),
-          h("p", null, "Open your phone and take a job as a General Labourer to start earning. Work your way up to truck driver, plant operator, or geologist."),
+          h("p", null, `Rent on your room in the compound house is ${cedis(this.life.rent)} a week, due on day ${this.life.rentDueDay}. The mine hires from 06:00 to 18:00.`),
+          h("p", null, "Open your phone and take a job as a General Labourer to start earning. Get better at each job to earn more, and work your way up to driver, geologist or shift supervisor. Chat with people in town to make friends."),
         ),
         [{ label: "Open my phone", primary: true, onPick: () => this.openPhone("jobs") }, { label: "Look around first" }],
       );
@@ -300,7 +387,9 @@ export class Game {
       life: {
         background: l.background, money: l.money, minutes: l.minutes, needs: l.needs, job: l.job, shiftsWorked: l.shiftsWorked,
         certs: [...l.certs], rentDueDay: l.rentDueDay, evicted: l.evicted, fare: l.fare, totalEarned: l.totalEarned,
+        xp: l.xp, home: l.home, ownsBike: l.ownsBike, friends: l.friends, lastChat: l.lastChat, goalsDone: [...l.goalsDone],
       },
+      bike: [this.bikeState.x, this.bikeState.z, this.bikeState.yaw],
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -318,6 +407,13 @@ export class Game {
       Object.assign(life, { money: d.life.money, minutes: d.life.minutes, needs: d.life.needs, job: d.life.job, rentDueDay: d.life.rentDueDay, evicted: d.life.evicted, fare: d.life.fare, totalEarned: d.life.totalEarned });
       Object.assign(life.shiftsWorked, d.life.shiftsWorked);
       for (const c of d.life.certs) life.certs.add(c);
+      Object.assign(life.xp, d.life.xp ?? {});
+      Object.assign(life.friends, d.life.friends ?? {});
+      Object.assign(life.lastChat, d.life.lastChat ?? {});
+      for (const g of d.life.goalsDone ?? []) life.goalsDone.add(g);
+      if (d.life.home in HOMES) life.home = d.life.home;
+      life.ownsBike = !!d.life.ownsBike;
+      if (d.bike) Object.assign(this.bikeState, { x: d.bike[0], z: d.bike[1], yaw: d.bike[2] });
       (life as unknown as { lastDay: number }).lastDay = life.day;
       return { profile: d.profile, life, pos: d.pos };
     } catch {
@@ -402,11 +498,15 @@ export class Game {
   private frame(): void {
     const dt = Math.min(0.05, this.clock.getDelta());
     const live = this.started && !this.hud.open && !this.paused;
+    this.time += dt;
+    wind.time.value = this.time;
     if (live) this.update(dt);
     this.animateWorld(live ? dt : 0);
     this.updateCamera(dt);
     this.updateLighting();
-    this.look.render(performance.now() / 1000);
+    this.dust.update(live ? dt : 0, this.world.hemi.color.clone().multiplyScalar(0.5).add(this.world.sun.color.clone().multiplyScalar(Math.min(1, this.world.sun.intensity / 3))));
+    this.rain.update(this.time, this.camera, this.look.rain, Math.min(1, this.world.sun.intensity / 2.5));
+    this.look.render(this.time);
     this.frames++;
     this.checkFps(dt);
   }
@@ -428,8 +528,42 @@ export class Game {
     this.setGraphics(this.look.quality - 1);
   }
 
+  /** Picks a starting quality from the GPU's name, or the player's saved choice. */
+  private defaultQuality(): number {
+    try {
+      const saved = localStorage.getItem(GRAPHICS_KEY);
+      if (saved !== null) {
+        this.fpsCheck.done = true;
+        return Math.max(0, Math.min(3, Number(saved)));
+      }
+    } catch {
+      // No storage: fall through to detection.
+    }
+    const gl = this.renderer.getContext();
+    const ext = gl.getExtension("WEBGL_debug_renderer_info");
+    const gpu = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : "";
+    if (/swiftshader|llvmpipe|software|basic render/i.test(gpu)) return 0;
+    if (/nvidia|geforce|gtx|rtx|quadro|radeon|rx ?\d|arc/i.test(gpu) && !/radeon\(tm\) graphics|vega \d+ graphics/i.test(gpu)) return 2;
+    return 1;
+  }
+
+  /** The renderer's name, shown on the Me tab. */
+  private gpuName(): string {
+    const gl = this.renderer.getContext();
+    const ext = gl.getExtension("WEBGL_debug_renderer_info");
+    return ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)).replace(/^ANGLE \((.*)\)$/, "$1") : "unknown";
+  }
+
   setGraphics(q: number): void {
     this.look.setQuality(q);
+    this.world.plants.grass.visible = q > 0;
+    const size = q >= 3 ? 4096 : 2048;
+    const sh = this.world.sun.shadow;
+    if (sh.mapSize.x !== size) {
+      sh.mapSize.set(size, size);
+      sh.map?.dispose();
+      (sh as { map: THREE.WebGLRenderTarget | null }).map = null;
+    }
     const shadows = q > 0;
     if (shadows !== this.shadows) {
       this.shadows = shadows;
@@ -449,11 +583,19 @@ export class Game {
     let activity: "idle" | "walk" | "run" | "work" = "idle";
     if (this.mode === "walk") activity = this.updateWalking(dt);
     else if (this.mode === "truck") this.updateDriving(dt);
+    else if (this.mode === "bike") this.updateBike(dt);
     else this.updateExcavator();
 
     const event = life.tick(dt * MINUTES_PER_SECOND, activity);
     if (event) this.showEvent(event);
     this.checkNeeds();
+    this.look.rain = this.weather.step(life.minutes, dt * MINUTES_PER_SECOND);
+    groundWet.value += ((this.look.rain > 0.05 ? 1 : 0) - groundWet.value) * Math.min(1, dt / (this.look.rain > 0.05 ? 25 : 120));
+    this.goalTimer -= dt;
+    if (this.goalTimer <= 0) {
+      this.goalTimer = 1;
+      for (const g of life.checkGoals()) this.hud.toast(`🏆 Goal reached: ${g.title}${g.reward ? `. +${cedis(g.reward)}` : ""}`, "gold");
+    }
 
     this.hudTimer -= dt;
     if (this.hudTimer <= 0) {
@@ -522,7 +664,7 @@ export class Game {
       this.myTruck.bed.rotation.x = -0.95 * (up - down);
       if (t.tipping > 2 && this.myTruck.loaded) {
         this.myTruck.setLoad(null);
-        const pay = this.life.completeTask(1);
+        const pay = this.task(1);
         this.hud.toast(`Tipped 100 t of ore into the crusher. +${cedis(pay)} (${this.life.shiftTasks}/${TASKS_PER_SHIFT} tasks)`, "gold");
       }
       if (t.tipping > 4.8) {
@@ -564,6 +706,58 @@ export class Game {
     this.updatePrompt();
   }
 
+  private parkBike(x: number, z: number, yaw: number): void {
+    Object.assign(this.bikeState, { x, z, yaw, speed: 0, steer: 0 });
+    const g = this.bike.group;
+    g.position.set(x, heightAt(x, z), z);
+    g.rotation.set(0, yaw, 0.12);
+    this.bike.steer(0.35);
+  }
+
+  private updateBike(dt: number): void {
+    const b = this.bikeState;
+    const { x, y } = this.axis();
+    const target = y > 0 ? y * BIKE_SPEED : y < 0 ? (b.speed > 1 ? 0 : y * 3) : 0;
+    const rate = y < 0 && b.speed > 1 ? 16 : y === 0 ? 4 : 7;
+    b.speed += Math.max(-rate * dt, Math.min(rate * dt, target - b.speed));
+    b.steer += (x - b.steer) * Math.min(1, dt * 6);
+    b.yaw -= b.steer * dt * 2.2 * Math.min(1, Math.abs(b.speed) / 3) * Math.sign(b.speed || 1);
+    const probe = new THREE.Vector3(b.x + Math.sin(b.yaw) * b.speed * dt, 0, b.z + Math.cos(b.yaw) * b.speed * dt);
+    let hit = this.collide(probe, 1);
+    for (const ai of this.trucks) if (Math.hypot(ai.x - probe.x, ai.z - probe.z) < 6) hit = true;
+    if (Math.hypot(this.truckState.x - probe.x, this.truckState.z - probe.z) < 6) hit = true;
+    if (hit && Math.abs(b.speed) > 6) {
+      this.hud.toast("Ouch! Mind where you ride.", "bad");
+      this.life.adjust({ energy: -3 });
+    }
+    if (hit) b.speed *= 0.3;
+    b.x = probe.x;
+    b.z = probe.z;
+    this.bike.roll(b.speed * dt);
+    this.bike.steer(-b.steer * 0.5);
+    const g = this.bike.group;
+    g.position.set(b.x, heightAt(b.x, b.z), b.z);
+    g.rotation.set(0, b.yaw, b.steer * 0.35 * Math.min(1, Math.abs(b.speed) / 10));
+    // The rider sits on the seat and leans with the bike.
+    this.pos.set(b.x, g.position.y, b.z);
+    const p = this.player.group;
+    p.position.copy(this.bike.seat).applyEuler(g.rotation).add(g.position);
+    p.position.y += -0.28;
+    p.rotation.copy(g.rotation);
+    this.yaw = b.yaw;
+    this.updatePrompt();
+  }
+
+  private mountBike(): void {
+    this.mode = "bike";
+    this.carrying = null;
+    this.player.hands.clear();
+    this.player.sitting = true;
+    this.player.animate(0, 0);
+    this.cam.yaw = this.bikeState.yaw + Math.PI;
+    this.hud.toast("W to ride, S to brake, A/D to steer. F to get off.", "info");
+  }
+
   private updateExcavator(): void {
     const s = this.world.shovel.group.position;
     this.pos.set(s.x, s.y, s.z);
@@ -582,6 +776,7 @@ export class Game {
       this.world.rigRod.position.y = 7.5 + Math.sin(performance.now() / 2000) * 1.2;
       this.world.millDrum.rotation.x += dt * 0.8;
       this.world.trayStack.visible = this.life && this.life.minutes >= this.trayReadyAt;
+      this.kickDust(dt);
     }
     // Beacon at the current goal.
     const target = this.started ? this.goal().target : null;
@@ -594,6 +789,24 @@ export class Game {
     }
   }
 
+  /** Trucks and bikes throw up red dust on dry laterite. */
+  private kickDust(dt: number): void {
+    this.dustTimer -= dt;
+    if (this.dustTimer > 0 || groundWet.value > 0.4) return;
+    this.dustTimer = 0.07;
+    const emit = (x: number, z: number, yaw: number, speed: number, back: number, size: number) => {
+      if (Math.abs(speed) < 3 || !inLease(x, z) || Math.hypot(x - this.camera.position.x, z - this.camera.position.z) > 160) return;
+      for (const side of [-1, 1]) {
+        const ex = x - Math.sin(yaw) * back + Math.cos(yaw) * side * size * 0.3;
+        const ez = z - Math.cos(yaw) * back - Math.sin(yaw) * side * size * 0.3;
+        this.dust.emit(ex, heightAt(ex, ez), ez, size * Math.min(1.4, Math.abs(speed) / 9), this.rng);
+      }
+    };
+    for (const t of this.trucks) emit(t.x, t.z, t.yaw, t.speed, 3.5, 4);
+    emit(this.truckState.x, this.truckState.z, this.truckState.yaw, this.truckState.speed, 3.5, 4);
+    if (this.mode === "bike") emit(this.bikeState.x, this.bikeState.z, this.bikeState.yaw, this.bikeState.speed, 1, 1.4);
+  }
+
   private updateCamera(dt: number): void {
     let target: THREE.Vector3;
     let dist = this.cam.dist;
@@ -602,6 +815,11 @@ export class Game {
       dist = Math.max(dist, 24);
       if (performance.now() - this.cam.dragAt > 1500 && Math.abs(this.truckState.speed) > 1)
         this.cam.yaw = turnToward(this.cam.yaw, this.truckState.yaw + Math.PI, dt * 1.2);
+    } else if (this.mode === "bike") {
+      const b = this.bikeState;
+      target = new THREE.Vector3(b.x, heightAt(b.x, b.z) + 2.2, b.z);
+      dist = Math.max(dist, 13);
+      if (performance.now() - this.cam.dragAt > 1500 && Math.abs(b.speed) > 1) this.cam.yaw = turnToward(this.cam.yaw, b.yaw + Math.PI, dt * 2);
     } else if (this.mode === "excavator") {
       const s = this.world.shovel.group.position;
       target = new THREE.Vector3(s.x + 6, s.y + 5, s.z);
@@ -648,21 +866,28 @@ export class Game {
     // By day the sun lights the scene; at night a pale moon from high up.
     const night = day < 0.12;
     const lightDir = night ? new THREE.Vector3(-0.3, 0.8, -0.5).normalize() : new THREE.Vector3(sunDir.x, Math.max(0.12, sunDir.y), sunDir.z).normalize();
-    w.sun.intensity = night ? 0.7 : 0.5 + day * 2.9;
+    const overcast = this.look.rain;
+    w.sun.intensity = (night ? 0.7 : 0.5 + day * 2.9) * (1 - overcast * 0.7);
     w.sun.color.set(night ? "#9fb4d9" : "#fff1d6").lerp(new THREE.Color("#ff9a50"), night ? 0 : Math.min(1, dusk * 0.9));
-    w.hemi.intensity = night ? 0.35 : 0.12 + day * 0.35;
+    w.hemi.intensity = (night ? 0.35 : 0.12 + day * 0.35) * (1 + overcast * 0.6);
+    w.sun.shadow.radius = 3 + overcast * 6;
     w.sun.position.copy(this.pos).addScaledVector(lightDir, 140);
     w.sun.target.position.copy(this.pos);
     const dark = day > 0.3 ? 0 : 1 - day / 0.3;
     windowGlow.emissiveIntensity = dark * 1.4;
     lampGlow.emissiveIntensity = dark * 6;
-    if (Math.abs(hour - this.bakedAt) > 0.5) {
+    if (Math.abs(hour - this.bakedAt) > 0.5 || Math.abs(overcast - this.bakedRain) > 0.15) {
       this.bakedAt = hour;
+      this.bakedRain = overcast;
       this.look.bakeEnvironment();
     }
   }
 
   // ---------------------------------------------------------------- goals and HUD
+
+  private homeSpot(): THREE.Vector3 {
+    return this.world.spots[HOME_SPOT[this.life.home]];
+  }
 
   private placeName(id: SpotId): string {
     return this.world.names[id] ?? id;
@@ -672,12 +897,12 @@ export class Game {
   private goal(): { text: string; target: THREE.Vector3 | null } {
     const l = this.life;
     const s = this.world.spots;
-    if (l.evicted) return { text: `You're locked out. Pay ${cedis(RENT.amount)} rent with MoMo on your phone.`, target: null };
+    if (l.evicted) return { text: `You're locked out. Pay ${cedis(this.life.rent)} rent with MoMo on your phone.`, target: null };
     if (!l.job) return { text: "Open your phone (P) and take a job. Anyone can start as a General Labourer.", target: null };
     const job = JOBS[l.job];
     const workplace = s[PLACE_SPOT[job.place]!];
     if (!l.onShift) {
-      if (!l.inShiftHours) return { text: `Shifts run ${SHIFT.start}:00 to ${SHIFT.end}:00. Rest, eat or have fun until then.`, target: l.needs.energy < 50 ? s.home : null };
+      if (!l.inShiftHours) return { text: `Shifts run ${SHIFT.start}:00 to ${SHIFT.end}:00. Rest, eat or have fun until then.`, target: l.needs.energy < 50 ? this.homeSpot() : null };
       return { text: `Go to ${this.placeName(PLACE_SPOT[job.place]!)} and clock in as ${job.title}.`, target: workplace };
     }
     switch (job.task) {
@@ -696,6 +921,10 @@ export class Game {
         return { text: this.shovel.bucketFull ? "E: swing and dump into the truck." : "E: dig a bucket of ore from the face.", target: null };
       case "panel":
         return { text: "Run mill batches at the control panel.", target: s.controlRoom };
+      case "inspect": {
+        const at = this.inspectAt ?? this.nextInspection();
+        return { text: `Inspect ${this.placeName(at)} and deal with any hazard you find.`, target: s[at] };
+      }
       case "map": {
         const flags = this.outcrops.filter((o) => o.flagged);
         if (!flags.length) this.flagOutcrops();
@@ -707,11 +936,12 @@ export class Game {
 
   private refreshHud(): void {
     const l = this.life;
-    let job = l.job ? JOBS[l.job].title : "Unemployed";
+    let job = l.job ? `${JOBS[l.job].title} · Lv ${l.level(l.job)}` : "Unemployed";
     if (l.onShift) job += ` · on shift · ${l.shiftTasks}/${TASKS_PER_SHIFT} tasks · ${cedis(l.shiftPay)}`;
     this.hud.setStats(l.money, `Day ${l.day} · ${l.weekday} ${l.clock}`, job, l.needs, l.onShift);
     this.hud.setGoal(this.goal().text);
     this.hud.vehicleBar.hidden = this.mode === "walk";
+
     this.mapTimer -= 0.15;
     if (this.mapTimer <= 0) {
       this.mapTimer = 0.3;
@@ -734,7 +964,10 @@ export class Game {
         this.hud.toast(`${NEED_INFO[n].icon} ${tips[n]}`, "bad");
       } else if (!low && this.life.needs[n] > 30) this.lowNeeds.delete(n);
     }
-    if (this.life.needs.energy <= 0 && this.mode === "walk") this.collapse();
+    if (this.life.needs.energy <= 0 && (this.mode === "walk" || this.mode === "bike")) {
+      if (this.mode === "bike") this.exitVehicle(true);
+      this.collapse();
+    }
   }
 
   private collapse(): void {
@@ -748,7 +981,7 @@ export class Game {
         l.money -= fee;
         l.passTime(8 * 60);
         l.adjust({ energy: 45, hunger: -10, fun: -10 });
-        this.pos.copy(this.world.spots.home);
+        this.pos.copy(this.homeSpot());
       }, "You collapsed from exhaustion…")
       .then(() => {
         this.paused = false;
@@ -757,6 +990,7 @@ export class Game {
   }
 
   private showEvent(e: LifeEvent): void {
+    if (e.title === "Rain in the pit") this.weather.forcedUntil = this.life.minutes + 180;
     this.hud.dialog(
       e.title,
       e.text,
@@ -771,7 +1005,7 @@ export class Game {
     );
     const l = this.life;
     const left = l.rentDueDay - l.day;
-    if (left >= 0 && left <= 1 && !l.evicted) this.hud.toast(`Rent of ${cedis(RENT.amount)} is due on day ${l.rentDueDay}. Pay with MoMo on your phone.`, "bad");
+    if (left >= 0 && left <= 1 && !l.evicted) this.hud.toast(`Rent of ${cedis(this.life.rent)} is due on day ${l.rentDueDay}. Pay with MoMo on your phone.`, "bad");
   }
 
   // ---------------------------------------------------------------- interactions
@@ -792,6 +1026,7 @@ export class Game {
       }
       return list;
     }
+    if (this.mode === "bike") return list;
     if (this.mode === "excavator") {
       add(this.pos, this.shovel.bucketFull ? "Swing and dump into the truck" : "Dig a bucket from the face", () => {
         const why = this.shovel.command();
@@ -800,7 +1035,19 @@ export class Game {
       return list;
     }
 
-    add(s.home, l.evicted ? "Your room is padlocked" : "Go into your room", () => this.homeMenu());
+    for (const id of Object.keys(HOMES) as HomeId[]) {
+      const mine = l.home === id;
+      add(s[HOME_SPOT[id]], mine ? (l.evicted ? "Your home is padlocked" : `Go into your ${HOMES[id].title.toLowerCase()}`) : `Ask the landlord about the ${HOMES[id].title.toLowerCase()} (${cedis(HOMES[id].rent)}/week)`, () => (mine ? this.homeMenu() : this.landlord(id)));
+    }
+    add(s.bikeShop, l.ownsBike ? "Okada Motors" : `Okada Motors: buy a motorbike (${cedis(BIKE_PRICE)})`, () => this.bikeShop());
+    if (l.ownsBike) add(new THREE.Vector3(this.bikeState.x, 0, this.bikeState.z), "Ride your motorbike", () => this.mountBike(), 2.5, 1.5);
+    // Anyone nearby to chat with.
+    for (const w of this.walkers) {
+      const p = w.person.group.position;
+      if (Math.abs(p.x - this.pos.x) > 4 || Math.abs(p.z - this.pos.z) > 4) continue;
+      const pts = l.friends[w.name] ?? 0;
+      add(p.clone(), `Chat with ${w.name} (${friendLevel(pts)})`, () => this.chat(w), 2.8, 3);
+    }
     add(s.chopBar, "Eat at Auntie Ama's Chop Bar", () => this.shop("chopBar", "Auntie Ama's Chop Bar", "Hot food, cold water, and the latest gossip."));
     add(s.spot, "Hang out at Gold Coast Spot", () => this.shop("spot", "Gold Coast Spot", "Highlife on the speaker and miners after their shift."));
     add(s.pitch, "Join the football match", () => this.shop("pitch", "Football pitch", "The boys need one more player."), 7);
@@ -813,7 +1060,7 @@ export class Game {
     if (l.job) {
       const job = JOBS[l.job];
       const spotId = PLACE_SPOT[job.place]!;
-      add(s[spotId], l.onShift ? `Clock out (${l.shiftTasks}/${TASKS_PER_SHIFT} tasks, ${cedis(l.shiftPay)})` : `Clock in as ${job.title}`, () => (l.onShift ? this.confirmClockOut() : this.clockIn()), 4.5, 2);
+      add(s[spotId], l.onShift ? `Clock out (${l.shiftTasks}/${TASKS_PER_SHIFT} tasks, ${cedis(l.shiftPay)})` : `Clock in as ${job.title}`, () => (l.onShift ? this.confirmClockOut() : this.clockIn()), 4.5, 0.9);
       if (l.onShift) {
         if (job.task === "carry") {
           if (!this.carrying) add(s.sackPile, "Pick up a sample sack", () => this.pickUp("sack"), 4.5, 0);
@@ -832,6 +1079,9 @@ export class Game {
           add(s.controlRoom, "Run a mill batch", () => this.millGame(), 4.5, 0);
         } else if (job.task === "map") {
           for (const o of this.outcrops) if (o.flagged) add(new THREE.Vector3(o.x, 0, o.z), "Map this outcrop", () => this.mapOutcrop(o), 5, 0);
+        } else if (job.task === "inspect") {
+          const at = this.inspectAt ?? this.nextInspection();
+          add(s[at], `Inspect ${this.placeName(at)}`, () => this.inspect(at), 6, 0);
         }
       }
     }
@@ -870,23 +1120,147 @@ export class Game {
   private homeMenu(): void {
     const l = this.life;
     if (l.evicted) {
-      this.hud.dialog("Padlocked", `The landlord locked your room. Rent of ${cedis(RENT.amount)} is overdue.`, [
-        { label: `Pay ${cedis(RENT.amount)} with MoMo`, primary: true, disabled: l.money < RENT.amount, onPick: () => this.payRent() },
+      this.hud.dialog("Padlocked", `The landlord locked your room. Rent of ${cedis(this.life.rent)} is overdue.`, [
+        { label: `Pay ${cedis(this.life.rent)} with MoMo`, primary: true, disabled: l.money < this.life.rent, onPick: () => this.payRent() },
         { label: "Leave" },
       ]);
       return;
     }
     const due = l.rentDueDay - l.day;
-    const offers = OFFERS.home!;
+    const home = HOMES[l.home];
+    const offers: Offer[] = [...OFFERS.home!];
+    if (l.home !== "room") offers.push({ id: "tv", label: "Watch the evening news and a movie", cost: 0, minutes: 90, effects: { fun: 25, energy: -3 } });
+    if (l.home === "selfCon") offers.push({ id: "guests", label: "Invite friends round for jollof", cost: 40, minutes: 120, effects: { social: 40, fun: 20, hunger: 35 } });
     this.hud.dialog(
-      "Your room",
-      `A single room in a compound house. Rent ${cedis(RENT.amount)} a week, ${due >= 0 ? `due in ${due} day${due === 1 ? "" : "s"}` : `${-due} day${due === -1 ? "" : "s"} late`}.`,
+      `Your ${home.title.toLowerCase()}`,
+      `${home.blurb} Rent ${cedis(l.rent)} a week, ${due >= 0 ? `due in ${due} day${due === 1 ? "" : "s"}` : `${-due} day${due === -1 ? "" : "s"} late`}.`,
       [
-        { label: "Sleep", sub: l.hour >= 20 || l.hour < 5 ? "Until morning" : "Up to 8 hours", primary: l.needs.energy < 40, onPick: () => this.sleep() },
+        { label: "Sleep", sub: `${l.hour >= 20 || l.hour < 5 ? "Until morning" : "Up to 8 hours"} · +${home.rest} energy an hour`, primary: l.needs.energy < 40, onPick: () => this.sleep() },
         { label: "Nap for 2 hours", sub: "+20 energy", onPick: () => this.nap() },
         ...offers.map((o) => this.offerChoice(o)),
-        { label: `Pay rent (${cedis(RENT.amount)})`, sub: `Next due day ${l.rentDueDay}`, disabled: l.money < RENT.amount, onPick: () => this.payRent() },
+        { label: `Pay rent (${cedis(this.life.rent)})`, sub: `Next due day ${l.rentDueDay}`, disabled: l.money < this.life.rent, onPick: () => this.payRent() },
       ],
+    );
+  }
+
+  private landlord(id: HomeId): void {
+    const l = this.life;
+    const home = HOMES[id];
+    const better = home.rent > l.rent;
+    this.hud.dialog(
+      home.title,
+      h("div", null, h("p", null, home.blurb), h("p", null, `Rent ${cedis(home.rent)} a week, first week paid up front. Sleep gives +${home.rest} energy an hour (you get +${HOMES[l.home].rest} now).`), l.evicted ? h("p.why", null, "The landlord wants your old rent cleared first.") : null),
+      [
+        {
+          label: `Move in · ${cedis(home.rent)}`,
+          sub: better ? "Your rent goes up, but you rest better" : "Cheaper rent, plainer room",
+          primary: true,
+          disabled: l.evicted || l.money < home.rent,
+          onPick: () => {
+            const err = l.moveHome(id);
+            this.hud.toast(err ?? `You moved into the ${home.title.toLowerCase()}. Rent is due on day ${l.rentDueDay}.`, err ? "bad" : "gold");
+          },
+        },
+        { label: "Not now" },
+      ],
+    );
+  }
+
+  private bikeShop(): void {
+    const l = this.life;
+    if (l.ownsBike) {
+      this.hud.dialog("Okada Motors", "\u201cHow's the bike treating you? Ride safe, and wear a helmet.\u201d", [
+        { label: "Bring my bike here", sub: "The mechanic fetches it for GH₵ 20", disabled: l.money < 20, onPick: () => {
+          l.spend(20);
+          const p = this.world.spots.bikePark;
+          this.parkBike(p.x, p.z, Math.PI);
+          this.hud.toast("Your bike is parked out front.", "good");
+        } },
+        { label: "Leave" },
+      ]);
+      return;
+    }
+    this.hud.dialog(
+      "Okada Motors",
+      h("div", null, h("p", null, "A 125 cc motorbike: tough enough for the mine roads, cheap on fuel. Get around town and out to the mine three times faster than walking, no trotro fare."), h("p", null, `Price ${cedis(BIKE_PRICE)}, paid by MoMo.`)),
+      [
+        {
+          label: `Buy the bike · ${cedis(BIKE_PRICE)}`,
+          primary: true,
+          disabled: l.money < BIKE_PRICE,
+          onPick: () => {
+            const err = l.buyBike();
+            if (err) return this.hud.toast(err, "bad");
+            const p = this.world.spots.bikePark;
+            this.parkBike(p.x, p.z, Math.PI);
+            this.bike.group.visible = true;
+            this.hud.toast("It's yours! Walk up to the bike and press E to ride.", "gold");
+          },
+        },
+        { label: "Just looking" },
+      ],
+    );
+  }
+
+  private chat(w: import("./npcs").Walker): void {
+    const l = this.life;
+    w.hold(this.pos.x, this.pos.z, 12);
+    this.yaw = Math.atan2(w.person.group.position.x - this.pos.x, w.person.group.position.z - this.pos.z);
+    const before = l.friends[w.name] ?? 0;
+    const gain = l.chat(w.name);
+    const after = l.friends[w.name] ?? 0;
+    const pool = CHAT_LINES[after >= 60 ? "close" : after >= 10 ? "known" : "new"];
+    const line = pool[Math.floor(this.rng.next() * pool.length)];
+    let extra = "";
+    if (gain && after >= 60 && this.rng.next() < 0.3) {
+      l.adjust({ hunger: 15 });
+      extra = ` ${w.name} shares some roasted plantain and groundnuts with you.`;
+    }
+    const levelNow = friendLevel(after);
+    const levelUp = levelNow !== friendLevel(before);
+    this.hud.dialog(
+      w.name,
+      h("div", null, h("p", null, line + extra), h("p.hint", null, gain ? `Friendship +${gain} · ${levelNow}${levelUp ? " (new!)" : ""}` : `You've already caught up with ${w.name} today. Come back tomorrow.`)),
+      [{ label: "Bye for now", primary: true }],
+    );
+  }
+
+  /** Any finished task, with level-up news. */
+  private task(quality = 1): number {
+    const l = this.life;
+    const pay = l.completeTask(quality);
+    if (l.levelledUp && l.job) {
+      const lv = l.levelledUp;
+      setTimeout(() => this.hud.toast(`⭐ ${JOBS[l.job!].title} skill level ${lv}! Pay for this job is now +${lv * 5}%.`, "gold"), 600);
+    }
+    return pay;
+  }
+
+  private nextInspection(): SpotId {
+    const choices = INSPECT_AREAS.filter((a) => a !== this.inspectAt);
+    this.inspectAt = choices[Math.floor(this.rng.next() * choices.length)];
+    return this.inspectAt;
+  }
+
+  /** The supervisor's site walk: spot the hazard and take the right action. */
+  private inspect(at: SpotId): void {
+    const pool = HAZARDS.filter((x) => x.areas.includes(at));
+    const hz = pool[Math.floor(this.rng.next() * pool.length)];
+    const options = [hz.right, ...hz.wrong].sort(() => this.rng.next() - 0.5);
+    this.hud.dialog(
+      `Inspection: ${this.placeName(at)}`,
+      h("div", null, h("p", null, hz.text), h("p.hint", null, "What do you do?")),
+      options.map((o) => ({
+        label: o,
+        onPick: () => {
+          this.life.tick(20, "work");
+          const right = o === hz.right;
+          const pay = this.task(right ? 1 : 0.4);
+          this.hud.toast(right ? `Hazard controlled. +${cedis(pay)} (${this.life.shiftTasks}/${TASKS_PER_SHIFT})` : `The safety manager steps in: "${hz.right}." +${cedis(pay)}`, right ? "gold" : "bad");
+          this.nextInspection();
+        },
+      })),
+      { dismissable: false },
     );
   }
 
@@ -959,6 +1333,7 @@ export class Game {
   private trainingMenu(): void {
     const l = this.life;
     const unlocks: Record<CertId, string> = {
+      safetyCert: "Shift Supervisor (also needs 2 driver shifts)",
       haulLicence: "Haul Truck Driver",
       plantCourse: "Plant Operator (also needs 2 labourer shifts)",
       excavatorTicket: "Excavator Operator (also needs 2 driver shifts)",
@@ -1009,6 +1384,7 @@ export class Game {
     const job = JOBS[this.life.job!];
     this.hud.toast(`Clocked in as ${job.title}. ${job.blurb}`, "good");
     if (job.task === "map") this.flagOutcrops();
+    if (job.task === "inspect") this.nextInspection();
   }
 
   private confirmClockOut(): void {
@@ -1045,7 +1421,7 @@ export class Game {
   private deliverSack(): void {
     this.drop();
     this.life.tick(10, "work");
-    const pay = this.life.completeTask(1);
+    const pay = this.task(1);
     this.hud.toast(`Sack logged in. +${cedis(pay)} (${this.life.shiftTasks}/${TASKS_PER_SHIFT} tasks)`, "gold");
   }
 
@@ -1070,7 +1446,7 @@ export class Game {
         this.drop();
         this.life.tick(15, "work");
         const right = k.id === "vein";
-        const pay = this.life.completeTask(right ? 1 : 0.6);
+        const pay = this.task(right ? 1 : 0.6);
         this.hud.toast(right ? `Good call: quartz-pyrite vein sent for assay. +${cedis(pay)}` : `The geologist corrects you: the veined interval was the one. +${cedis(pay)}`, right ? "gold" : "info");
       },
     })), { dismissable: false });
@@ -1093,8 +1469,21 @@ export class Game {
     this.hud.toast("E digs from the face; E again swings and dumps. Three buckets fill a truck.", "info");
   }
 
-  private exitVehicle(): void {
+  private exitVehicle(force = false): void {
     if (this.mode === "walk") return;
+    if (this.mode === "bike") {
+      const b = this.bikeState;
+      if (Math.abs(b.speed) > 2 && !force) {
+        this.hud.toast("Slow down first (S).", "bad");
+        return;
+      }
+      this.parkBike(b.x, b.z, b.yaw);
+      this.player.sitting = false;
+      this.player.group.rotation.set(0, b.yaw, 0);
+      this.pos.set(b.x + Math.cos(b.yaw) * 1.4, 0, b.z - Math.sin(b.yaw) * 1.4);
+      this.mode = "walk";
+      return;
+    }
     if (this.mode === "truck") {
       const t = this.truckState;
       if (Math.abs(t.speed) > 0.5 || t.tipping >= 0) {
@@ -1174,7 +1563,7 @@ export class Game {
         const share = inside / duration;
         this.hud.close(false);
         this.life.tick(30, "work");
-        const pay = this.life.completeTask(0.5 + share * 0.5);
+        const pay = this.task(0.5 + share * 0.5);
         this.hud.dialog("Batch done", `The mill held spec ${Math.round(share * 100)}% of the batch. +${cedis(pay)} (${this.life.shiftTasks}/${TASKS_PER_SHIFT} tasks).`, [
           { label: "Run another batch", primary: true, onPick: () => this.life.onShift && this.millGame() },
           { label: "Step away" },
@@ -1216,7 +1605,7 @@ export class Game {
         o.flag.visible = false;
         this.life.tick(20, "work");
         const right = r === o.type;
-        const pay = this.life.completeTask(right ? 1 : 0.5);
+        const pay = this.task(right ? 1 : 0.5);
         this.hud.toast(right ? `Mapped as ${ROCKS[r].name}. +${cedis(pay)}` : `Your supervisor logs it as ${ROCKS[o.type].name}. +${cedis(pay)}`, right ? "gold" : "info");
         if (!this.outcrops.some((x) => x.flagged)) this.flagOutcrops();
       },
@@ -1240,10 +1629,14 @@ export class Game {
           this.hud.toast(err ?? `You're now a ${j.title}. Clock in at ${this.placeName(PLACE_SPOT[j.place]!)} during shift hours.`, err ? "bad" : "good");
           this.hud.refreshSheet();
         });
-        list.append(h(`div.item${current ? ".current" : ""}`, null, h("div", null, h("b", null, j.title), h("small", null, `${cedis(j.pay)} per task · ${j.blurb}`), why ? h("small.why", null, why) : null), take));
+        const xp = l.xp[id];
+        const lv = levelFor(xp);
+        const toNext = lv >= MAX_LEVEL ? 1 : (xp - xpForLevel(lv)) / (xpForLevel(lv + 1) - xpForLevel(lv));
+        const payNow = Math.round(j.pay * (1 + 0.05 * lv));
+        list.append(h(`div.item${current ? ".current" : ""}`, null, h("div", null, h("b", null, j.title, h("span.level", null, `Lv ${lv}`)), h("small", null, `${cedis(payNow)} per task · ${j.blurb}`), why ? h("small.why", null, why) : null, xp > 0 ? h("div.xpbar", { title: `${xp} XP` }, h("i", { style: `width:${Math.round(toNext * 100)}%` })) : null), take));
       }
       const foot = l.onShift ? h("button.choice", { onclick: () => this.clockOut() }, h("span", null, `Clock out now (${cedis(l.shiftPay)})`)) : null;
-      return h("div", null, h("p.hint", null, `Shifts ${SHIFT.start}:00–${SHIFT.end}:00. ${TASKS_PER_SHIFT} tasks make a counted shift.`), list, foot);
+      return h("div", null, h("p.hint", null, `Shifts ${SHIFT.start}:00–${SHIFT.end}:00. ${TASKS_PER_SHIFT} tasks make a counted shift. Every skill level adds 5% to that job's pay.`), list, foot);
     };
     const training = () =>
       h(
@@ -1254,8 +1647,18 @@ export class Game {
       );
     const momo = () => {
       const due = l.rentDueDay - l.day;
-      const pay = h("button.choice.primary", { disabled: l.money < RENT.amount, onclick: () => this.payRent() }, h("span", null, `Pay rent ${cedis(RENT.amount)}`), h("small", null, l.evicted ? "You're locked out until you pay" : due >= 0 ? `Due day ${l.rentDueDay} (in ${due} day${due === 1 ? "" : "s"})` : `${-due} days late`));
+      const pay = h("button.choice.primary", { disabled: l.money < l.rent, onclick: () => this.payRent() }, h("span", null, `Pay rent ${cedis(this.life.rent)}`), h("small", null, l.evicted ? "You're locked out until you pay" : due >= 0 ? `Due day ${l.rentDueDay} (in ${due} day${due === 1 ? "" : "s"})` : `${-due} days late`));
       return h("div", null, h("div.balance", null, h("small", null, "MoMo wallet"), h("b", null, cedis(l.money))), pay, h("p.hint", null, `Lifetime wages ${cedis(l.totalEarned)}. Trotro fare ${cedis(l.fare)}.`));
+    };
+    const goals = () =>
+      h("div.list", null, h("p.hint", null, `${l.goalsDone.size} of ${GOALS.length} reached.`), ...GOALS.map((g) => {
+        const done = l.goalsDone.has(g.id);
+        return h(`div.item.milestone${done ? ".done" : ""}`, null, h("div", null, h("b", null, g.title), h("small", null, `${g.hint}${g.reward ? ` · reward ${cedis(g.reward)}` : ""}`)));
+      }));
+    const friends = () => {
+      const names = Object.keys(l.friends).sort((a, b) => l.friends[b] - l.friends[a]);
+      if (!names.length) return h("div", null, h("p.hint", null, "Walk up to people in town or at the mine and press E to chat. Talk to the same person on different days to become friends. Good friends cheer you up more and sometimes share food."));
+      return h("div.list", null, h("p.hint", null, "One chat a day per person grows the friendship."), ...names.map((n) => h("div.item", null, h("div", null, h("b", null, n), h("small", null, `${friendLevel(l.friends[n])}${l.lastChat[n] === l.day ? " · talked today" : ""}`), h("div.xpbar", null, h("i", { style: `width:${l.friends[n]}%` }))))));
     };
     const me = () =>
       h(
@@ -1263,22 +1666,31 @@ export class Game {
         null,
         h("p", null, h("b", null, this.profile.name), ` · ${l.background === "family" ? "came with family savings" : "came with nothing but hustle"}`),
         h("div.needList", null, ...NEEDS.map((n) => h("div", null, `${NEED_INFO[n].icon} ${NEED_INFO[n].label}`, h("b", null, `${Math.round(l.needs[n])}`)))),
+        h("p.hint", null, `Home: ${HOMES[l.home].title} (${cedis(l.rent)}/week)${l.ownsBike ? " · owns a motorbike" : ""}`),
         h("p.hint", null, `Certificates: ${[...l.certs].map((c) => CERTS[c].title).join(", ") || "none yet"}`),
-        h("div.field", null, h("span", null, "Graphics"), h("div.tabs", null, ...[["Low", 0], ["Medium", 1], ["High", 2]].map(([label, q]) => {
-          const b = h("button", { "aria-selected": String(this.look.quality === q) }, String(label));
+        h("div.field", null, h("span", null, "Graphics"), h("div.tabs", null, ...QUALITY_NAMES.map((label, q) => {
+          const b = h("button", { "aria-selected": String(this.look.quality === q) }, label);
           b.addEventListener("click", () => {
             this.fpsCheck.done = true;
-            this.setGraphics(q as number);
+            this.setGraphics(q);
+            try {
+              localStorage.setItem(GRAPHICS_KEY, String(q));
+            } catch {
+              // Not saved; it still applies now.
+            }
             this.hud.refreshSheet();
           });
           return b;
         }))),
+        h("p.hint", null, `GPU: ${this.gpuName()}. Low for weak laptops, High for 2 GB graphics cards, Ultra adds ambient occlusion and sharper shadows.`),
         h("button.choice", { onclick: () => (this.save(), this.hud.toast("Game saved on this device.", "good")) }, h("span", null, "Save game")),
       );
     this.hud.sheet("Phone", [
       { id: "jobs", label: "Jobs", render: jobs },
       { id: "training", label: "Training", render: training },
       { id: "momo", label: "MoMo", render: momo },
+      { id: "goals", label: "Goals", render: goals },
+      { id: "friends", label: "Friends", render: friends },
       { id: "me", label: "Me", render: me },
     ], tab);
   }
@@ -1339,7 +1751,7 @@ export class Game {
       ctx.font = "600 22px Fredoka, sans-serif";
       ctx.textAlign = "center";
       const named: [SpotId, string][] = [
-        ["home", "Your room"], ["chopBar", "Chop bar"], ["spot", "Spot"], ["training", "Training"], ["pitch", "Pitch"],
+        [HOME_SPOT[this.life.home], "Your home"], ["bikeShop", "Okada Motors"], ["chopBar", "Chop bar"], ["spot", "Spot"], ["training", "Training"], ["pitch", "Pitch"],
         ["trotroTown", "Trotro"], ["trotroMine", "Trotro"], ["office", "Office"], ["stockyard", "Stockyard"], ["coreShed", "Core shed"],
         ["drillRig", "Drill rig"], ["truckPark", "Truck park"], ["controlRoom", "Control room"], ["crusher", "Crusher"], ["shovel", "Excavator"],
       ];
@@ -1372,7 +1784,7 @@ export class Game {
       ctx.stroke();
     }
     // The player, as an arrow pointing the way they face.
-    const yaw = this.mode === "truck" ? this.truckState.yaw : this.yaw;
+    const yaw = this.mode === "truck" ? this.truckState.yaw : this.mode === "bike" ? this.bikeState.yaw : this.yaw;
     ctx.save();
     ctx.translate(X(this.pos.x), Z(this.pos.z));
     ctx.rotate(-yaw + Math.PI);

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { concrete, grain, plaster, worldUV, zinc } from "./textures";
+import { blob, concrete, grain, normalMap, plaster, worldUV, zinc } from "./textures";
 
 /**
  * The models, built from primitives with physically based materials and procedural textures,
@@ -31,6 +31,53 @@ export function paint(color: string): THREE.MeshStandardMaterial {
   return m;
 }
 
+/** Vehicle paint caked in red dust in patches, for anything that works on the lease. */
+export function dustyPaint(color: string): THREE.MeshStandardMaterial {
+  const key = `dusty|${color}`;
+  let m = materials.get(key);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.3 });
+    m.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 vWorld;")
+        .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;");
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+varying vec3 vWorld;
+float dh(vec3 p) { return fract(sin(dot(p, vec3(12.99, 78.23, 45.16))) * 43758.55); }
+float dn(vec3 p) { vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(dh(i), dh(i + vec3(1,0,0)), f.x), mix(dh(i + vec3(0,1,0)), dh(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(dh(i + vec3(0,0,1)), dh(i + vec3(1,0,1)), f.x), mix(dh(i + vec3(0,1,1)), dh(i + vec3(1,1,1)), f.x), f.y), f.z); }
+float dust = 0.0;`,
+        )
+        .replace(
+          "#include <map_fragment>",
+          `#include <map_fragment>
+dust = smoothstep(0.45, 0.8, dn(vWorld * 0.9) * 0.6 + dn(vWorld * 3.1) * 0.4);
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.24, 0.15), dust * 0.75);`,
+        )
+        .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 1.0, dust);")
+        .replace("#include <metalnessmap_fragment>", "#include <metalnessmap_fragment>\nmetalnessFactor *= 1.0 - dust;");
+    };
+    m.customProgramCacheKey = () => "dusty";
+    materials.set(key, m);
+  }
+  return m;
+}
+
+/** A soft dark disc that grounds people and vehicles, even beyond the shadow map. */
+const blobMat = new THREE.MeshBasicMaterial({ color: "#000000", alphaMap: blob(), transparent: true, depthWrite: false, opacity: 0.5, polygonOffset: true, polygonOffsetFactor: -2 });
+const blobGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+export function contactShadow(w: number, d: number, opacity = 0.5): THREE.Mesh {
+  const m = new THREE.Mesh(blobGeo, opacity === 0.5 ? blobMat : Object.assign(blobMat.clone(), { opacity }));
+  m.scale.set(w, 1, d);
+  m.position.y = 0.04;
+  m.renderOrder = 1;
+  return m;
+}
+
 /** Bare steel, chrome-ish. */
 export const steel = new THREE.MeshStandardMaterial({ color: "#9a9ea2", roughness: 0.35, metalness: 0.85 });
 /** Tyres. */
@@ -46,8 +93,9 @@ function surface(kind: "plaster" | "zinc" | "concrete", color: string): THREE.Me
       map,
       roughness: kind === "zinc" ? 0.55 : 0.92,
       metalness: kind === "zinc" ? 0.45 : 0,
-      bumpMap: map,
-      bumpScale: kind === "zinc" ? 1.6 : 0.8,
+      // Relief from the texture itself: zinc ridges, plaster cracks and pitting, block joints.
+      normalMap: normalMap(map, kind, kind === "zinc" ? 3 : 2.2),
+      normalScale: new THREE.Vector2(1, 1),
     });
     materials.set(key, m);
   }
@@ -212,7 +260,7 @@ export class Person {
       this.body.add(hair);
     }
     this.hands.position.set(0, 1.45, 0.5);
-    this.group.add(...this.legs.map((l) => l.hip), this.body);
+    this.group.add(...this.legs.map((l) => l.hip), this.body, contactShadow(1.3, 1.3, 0.45));
   }
 
   /** Call every frame with the ground speed in units per second. */
@@ -284,7 +332,8 @@ export class HaulTruck {
 
   constructor(colour = "#e8a700") {
     const g = this.group;
-    const body = paint(colour);
+    const body = dustyPaint(colour);
+    g.add(contactShadow(7.5, 12.5, 0.6));
     g.add(box(3.6, 1, 9.6, mat("#2d2d2d"), 0, 1.95, 0)); // chassis rails
     g.add(box(4.9, 1.0, 1.4, body, 0, 2.95, 4.55)); // front deck
     g.add(box(3.7, 1.6, 0.7, mat("#1b1b1b"), 0, 2.4, 5.0)); // radiator
@@ -588,4 +637,56 @@ export function label(text: string, colour = "#ffffff", background = "rgba(14,14
   sprite.scale.set((h * width) / canvas.height, h, 1);
   sprite.renderOrder = 5;
   return sprite;
+}
+
+/** A small okada motorbike. Faces +z; `fork` steers, wheels roll. The rider sits at `seat`. */
+export class Motorbike {
+  readonly group = new THREE.Group();
+  readonly fork = new THREE.Group();
+  readonly seat = new THREE.Vector3(0, 0.62, -0.25);
+  private readonly wheels: THREE.Group[] = [];
+
+  constructor(colour = "#b8241f") {
+    const g = this.group;
+    const body = paint(colour);
+    const black = mat("#1b1b1b");
+    const back = wheel(0.36, 0.16);
+    back.position.set(0, 0.36, -0.75);
+    const front = wheel(0.36, 0.14);
+    front.position.set(0, -0.74, 0.3);
+    this.wheels.push(back, front);
+    // Frame, tank, seat, side covers and exhaust.
+    const frame = box(0.12, 0.12, 1.3, steel, 0, 0.62, 0);
+    frame.rotation.x = 0.25;
+    const tank = box(0.36, 0.26, 0.5, body, 0, 0.92, 0.25);
+    const seat = box(0.3, 0.12, 0.7, black, 0, 0.88, -0.32);
+    const cover = box(0.34, 0.26, 0.4, body, 0, 0.66, -0.35);
+    const engine = box(0.3, 0.28, 0.34, mat("#4a4a4a"), 0, 0.42, 0.02);
+    const pipe = cylinder(0.05, 0.06, 0.9, steel, 8);
+    pipe.rotation.x = Math.PI / 2 - 0.12;
+    pipe.position.set(0.2, 0.36, -0.42);
+    const rack = box(0.34, 0.04, 0.38, steel, 0, 0.92, -0.85);
+    const fender = box(0.18, 0.05, 0.5, body, 0, 0.78, -0.8);
+    g.add(back, frame, tank, seat, cover, engine, pipe, rack, fender);
+    // Fork, front wheel, bars and lamp turn together.
+    const legs = box(0.06, 0.75, 0.06, steel, -0.1, -0.25, 0.12);
+    const legs2 = box(0.06, 0.75, 0.06, steel, 0.1, -0.25, 0.12);
+    legs.rotation.x = legs2.rotation.x = 0.35;
+    const bars = box(0.75, 0.05, 0.05, steel, 0, 0.24, -0.04);
+    const grips = [box(0.14, 0.07, 0.07, black, -0.4, 0.24, -0.04), box(0.14, 0.07, 0.07, black, 0.4, 0.24, -0.04)];
+    const lamp = box(0.18, 0.16, 0.08, lampGlow, 0, 0.06, 0.18);
+    const frontFender = box(0.16, 0.04, 0.4, body, 0, -0.18, 0.34);
+    this.fork.add(legs, legs2, bars, ...grips, lamp, front, frontFender);
+    this.fork.position.set(0, 0.98, 0.62);
+    this.fork.rotation.x = -0.3;
+    g.add(this.fork, contactShadow(0.9, 2.2, 0.55));
+  }
+
+  roll(distance: number): void {
+    for (const w of this.wheels) w.rotation.x += distance / 0.36;
+  }
+
+  steer(angle: number): void {
+    this.fork.rotation.y = angle;
+  }
 }
